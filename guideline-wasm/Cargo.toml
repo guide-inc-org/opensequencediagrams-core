@@ -1,0 +1,18 @@
+[package]
+name = "guideline-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebAssembly bindings for guideline"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+guideline-core = { path = "../guideline-core" }
+wasm-bindgen = { workspace = true }
+
+[profile.release]
+opt-level = "s"
+lto = true
