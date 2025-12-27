@@ -1,0 +1,77 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build WASM
+        run: |
+          cd osd-wasm
+          wasm-pack build --target web --out-dir ../osd-js/pkg
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update package.json
+        run: |
+          cd osd-js/pkg
+          # Extract version from tag (v0.1.0 -> 0.1.0)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          # Update package.json
+          cat > package.json << EOF
+          {
+            "name": "@guide-inc-org/opensequencediagrams-core",
+            "type": "module",
+            "description": "WebSequenceDiagrams-compatible sequence diagram parser and renderer",
+            "version": "${VERSION}",
+            "license": "MIT",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/guide-inc-org/opensequencediagrams-core"
+            },
+            "keywords": [
+              "sequence-diagram",
+              "wasm",
+              "websequencediagrams",
+              "svg",
+              "parser",
+              "renderer"
+            ],
+            "files": [
+              "osd_wasm_bg.wasm",
+              "osd_wasm.js",
+              "osd_wasm.d.ts"
+            ],
+            "main": "osd_wasm.js",
+            "types": "osd_wasm.d.ts",
+            "sideEffects": [
+              "./snippets/*"
+            ],
+            "publishConfig": {
+              "access": "public"
+            }
+          }
+          EOF
+
+      - name: Publish to npm
+        run: |
+          cd osd-js/pkg
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
