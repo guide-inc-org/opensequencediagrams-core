@@ -1,10 +1,10 @@
 [package]
-name = "guideline-core"
+name = "osd-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "WebSequenceDiagrams-compatible sequence diagram parser and SVG renderer"
+description = "OpenSequenceDiagrams core - A sequence diagram parser and SVG renderer"
 
 [dependencies]
 nom = { workspace = true }

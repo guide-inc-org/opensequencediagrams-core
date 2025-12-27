@@ -1,6 +1,6 @@
-# guideline
+# OpenSequenceDiagrams Core
 
-WebSequenceDiagrams-compatible sequence diagram renderer built with Rust and WebAssembly.
+A sequence diagram parser and SVG renderer built with Rust and WebAssembly. An open-source alternative to WebSequenceDiagrams.
 
 ## Features
 
@@ -14,14 +14,14 @@ WebSequenceDiagrams-compatible sequence diagram renderer built with Rust and Web
 ### npm
 
 ```bash
-npm install @guide-inc-org/guideline
+npm install @opensequencediagrams/core
 ```
 
 ### CDN
 
 ```html
 <script type="module">
-  import init, { render } from 'https://cdn.jsdelivr.net/npm/@guide-inc-org/guideline/guideline_wasm.js';
+  import init, { render } from 'https://cdn.jsdelivr.net/npm/@opensequencediagrams/core/osd_wasm.js';
   await init();
   const svg = render('Alice->Bob: Hello');
 </script>
@@ -32,7 +32,7 @@ npm install @guide-inc-org/guideline
 ### ES Modules
 
 ```javascript
-import init, { render } from '@guide-inc-org/guideline';
+import init, { render } from '@opensequencediagrams/core';
 
 await init();
 
@@ -52,16 +52,16 @@ document.getElementById('diagram').innerHTML = svg;
 ### Auto-render with class
 
 ```html
-<div class="guideline">
+<div class="sequence-diagram">
 Alice->Bob: Hello
 Bob-->Alice: Hi there
 </div>
 
 <script type="module">
-  import init, { render } from '@guide-inc-org/guideline';
+  import init, { render } from '@opensequencediagrams/core';
   await init();
 
-  document.querySelectorAll('.guideline').forEach(el => {
+  document.querySelectorAll('.sequence-diagram').forEach(el => {
     el.innerHTML = render(el.textContent);
   });
 </script>
@@ -146,8 +146,8 @@ destroy Bob
 cargo build
 
 # Build WebAssembly
-cd guideline-wasm
-wasm-pack build --target web --out-dir ../guideline-js/pkg
+cd osd-wasm
+wasm-pack build --target web --out-dir ../osd-js/pkg
 
 # Run tests
 cargo test
@@ -156,11 +156,11 @@ cargo test
 ## Project Structure
 
 ```
-guideline/
-├── guideline-core/     # Rust parser + SVG renderer
-├── guideline-wasm/     # WebAssembly bindings
-├── guideline-js/       # npm package
-└── examples/           # Demo files
+opensequencediagrams-core/
+├── osd-core/     # Rust parser + SVG renderer
+├── osd-wasm/     # WebAssembly bindings
+├── osd-js/       # npm package
+└── examples/     # Demo files
 ```
 
 ## License

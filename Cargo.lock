@@ -21,23 +21,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
-name = "guideline-core"
-version = "0.1.0"
-dependencies = [
- "nom",
- "pretty_assertions",
- "thiserror",
-]
-
-[[package]]
-name = "guideline-wasm"
-version = "0.1.0"
-dependencies = [
- "guideline-core",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -57,6 +40,23 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "osd-core"
+version = "0.1.0"
+dependencies = [
+ "nom",
+ "pretty_assertions",
+ "thiserror",
+]
+
+[[package]]
+name = "osd-wasm"
+version = "0.1.0"
+dependencies = [
+ "osd-core",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "pretty_assertions"

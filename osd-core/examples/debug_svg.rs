@@ -1,4 +1,4 @@
-use guideline_core::{parse, render};
+use osd_core::{parse, render};
 
 fn main() {
     let input = r#"

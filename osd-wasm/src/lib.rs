@@ -1,6 +1,6 @@
-//! WebAssembly bindings for guideline
+//! WebAssembly bindings for OpenSequenceDiagrams
 
-use guideline_core::{Config, Theme};
+use osd_core::{Config, Theme};
 use wasm_bindgen::prelude::*;
 
 /// Render a sequence diagram to SVG
@@ -12,8 +12,8 @@ use wasm_bindgen::prelude::*;
 /// The rendered SVG as a string, or an error message
 #[wasm_bindgen]
 pub fn render(input: &str) -> Result<String, String> {
-    match guideline_core::parse(input) {
-        Ok(diagram) => Ok(guideline_core::render(&diagram)),
+    match osd_core::parse(input) {
+        Ok(diagram) => Ok(osd_core::render(&diagram)),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -31,8 +31,8 @@ pub fn render_with_theme(input: &str, theme_name: &str) -> Result<String, String
     let theme = Theme::by_name(theme_name).unwrap_or_else(Theme::default);
     let config = Config::default().with_theme(theme);
 
-    match guideline_core::parse(input) {
-        Ok(diagram) => Ok(guideline_core::render_with_config(&diagram, config)),
+    match osd_core::parse(input) {
+        Ok(diagram) => Ok(osd_core::render_with_config(&diagram, config)),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -55,7 +55,7 @@ pub fn available_themes() -> Vec<String> {
 /// The parsed diagram as JSON, or an error message
 #[wasm_bindgen]
 pub fn parse_to_json(input: &str) -> Result<String, String> {
-    match guideline_core::parse(input) {
+    match osd_core::parse(input) {
         Ok(diagram) => {
             // Simple JSON serialization
             let mut json = String::from("{");
@@ -74,8 +74,8 @@ pub fn parse_to_json(input: &str) -> Result<String, String> {
                     r#"{{"name":"{}","kind":"{}"}}"#,
                     escape_json(&p.name),
                     match p.kind {
-                        guideline_core::ParticipantKind::Participant => "participant",
-                        guideline_core::ParticipantKind::Actor => "actor",
+                        osd_core::ParticipantKind::Participant => "participant",
+                        osd_core::ParticipantKind::Actor => "actor",
                     }
                 ));
             }

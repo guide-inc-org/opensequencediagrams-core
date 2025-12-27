@@ -1,9 +1,9 @@
-//! guideline-core: WebSequenceDiagrams-compatible sequence diagram parser and SVG renderer
+//! osd-core: OpenSequenceDiagrams core library - A sequence diagram parser and SVG renderer
 //!
 //! # Example
 //!
 //! ```
-//! use guideline_core::{parse, render};
+//! use osd_core::{parse, render};
 //!
 //! let input = r#"
 //! title Example
@@ -19,7 +19,7 @@
 //! # Themed rendering
 //!
 //! ```
-//! use guideline_core::{parse, render_with_config, Config, Theme};
+//! use osd_core::{parse, render_with_config, Config, Theme};
 //!
 //! let input = "Alice->Bob: Hello";
 //! let diagram = parse(input).unwrap();

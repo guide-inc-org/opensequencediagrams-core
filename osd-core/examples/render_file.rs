@@ -1,4 +1,4 @@
-use guideline_core::{parser, renderer};
+use osd_core::{parser, renderer};
 use std::{env, fs};
 
 fn main() {

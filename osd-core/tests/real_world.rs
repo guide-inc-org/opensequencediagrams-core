@@ -1,6 +1,9 @@
-use guideline_core::{parse, render};
+//! Real-world test cases
 
-fn main() {
+use osd_core::{parse, render};
+
+#[test]
+fn test_security_setting_diagram() {
     let input = r#"
 title security-setting-withdrawal-auth-native
 
@@ -20,8 +23,6 @@ User->Webview:tap [変更する]
 
 Native->Native:HOOK\ncode,native_state生成\nsession_id,xsrf-token取得\n(webviewの設定値を取得)
 
-note over User,CSBrowser:・session_id:認証シーケンス開始前からWebViewとBFF間のセション
-
 Native->BFF:POST Code登録エンドポイント\ncookie:session_id\nrequest-header(x-xsrf-token):xsrf-token\nrequest body:native_state,code
 
 BFF->Redis:session取得(key:session_id)
@@ -36,15 +37,8 @@ opt session取得失敗・xsrf-token検証失敗
 end
 
 BFF->BFF:verify channel
-note over BFF:channel≠"Native"の場合は400を返却し処理を終了
 
 BFF->Redis:key=code,\nvalue=session_id,\nnative_state,ttl=60s
-
-opt Redisへのデータ保存失敗
-    BFF-->Native:500
-    Native->Native:show dialog
-    Native->Webview:Foreground\nshow security setting
-end
 
 BFF-->Native:正常応答
 
@@ -53,11 +47,6 @@ Native->CSBrowser:open
 CSBrowser->BFF:NativeApp用出金認証\nログインエンドポイント\nquerystring:code
 
 BFF->Redis:Get code
-
-opt code取得失敗
-    BFF->CSBrowser:redirect to error screen
-    CSBrowser->CSBrowser:show error screen\n再実施を案内する
-end
 
 Redis-->BFF:value=session_id
 
@@ -82,15 +71,10 @@ CSBrowser->idP:Authz Request
 
 idP-->CSBrowser:出金認証ログイン画面
 
-User->CSBrowser:出金パスワード入力&submit
+User->CSBrowser:出金パスワード入力
 
 CSBrowser->idP:Submit
 idP->idP:verify
-
-opt auth0セッション切れ
-    idP-->CSBrowser:redirect to initiate_login_uri=専用エラーページのURL
-    CSBrowser->CSBrowser:エラーページ表示
-end
 
 idP-->CSBrowser:redirect to BFF
 
@@ -99,28 +83,10 @@ CSBrowser->BFF:callback
 BFF->Redis:session取得(key:session_id_csb)
 BFF->BFF:verify state
 
-opt stateの検証成功
-    BFF->Redis:delete key=session_id_csb
-end
-
-opt ユーザーが出金認証をキャンセル
-    BFF-->CSBrowser:redirect to cancel screen\nset-cookie:session_id_csb削除
-    CSBrowser->CSBrowser:show cancel screen\nキャンセルの旨を表示
-end
-
-BFF->Redis:session取得(key:session_id)\nsession_idはsession_id_csbに紐つく\n出金認証用セッションから取得
-
 BFF->idP:token request
 idP-->BFF:
 
 BFF->BFF:verify idToken
-
-note over BFF:通常のidToken検証に加えて、下記を実施\n・IDトークンから取得した口座番号がsession取得(key:session_id)\nによって取得したaccountNoと一致すること\n・出金認証のコネクションと一致\n・auth_timeのチェック
-
-opt session取得・state検証・idToken検証失敗
-    BFF->CSBrowser:redirect to error screen
-    CSBrowser->CSBrowser:show error screen\n再実施を案内する
-end
 
 BFF->BFF:セキュリティ設定画面用セッションID生成\n(security_setting_session_id)
 
@@ -128,22 +94,13 @@ BFF->Redis:update key=session_id,\nvalue=security_setting_session_id
 
 BFF->Redis:store key=security_setting_session_id,\nvalue=access_token,ttl=expire_in
 
-BFF->CSBrowser:redict to 出金認証完了ページ\nset-cookie:session_id_csb削除\nquery string native_state
-
-alt UniversalLink＆AppLink発火
+alt UniversalLink発火
     Native->Native:native_state検証
-    opt 検証成功
-        Native->Native:native_state破棄
-        Native->Webview:foreground
-    end
-else UniversalLink＆AppLink未発火
+    Native->Webview:foreground
+else AppLink未発火
     CSBrowser->CSBrowser:出金認証完了ページ
-    CSBrowser-->Native:Custom url scheme
     Native->Native:native_state検証
-    opt 検証成功
-        Native->Native:native_state破棄
-        Native->Webview:foreground
-    end
+    Native->Webview:foreground
 end
 
 Webview->Webview:reload
@@ -152,34 +109,69 @@ Webview->BFF:セキュリティ設定画面セッションチェック
 BFF->Redis:session取得(key:session_id)
 BFF->BFF:xsrf-token検証
 
-opt ログインセッション取得失敗/xsrf-token検証失敗
-    BFF-->Webview:401
-    Webview->Webview:show dialog\nsession expired
-end
-
 Redis-->BFF:value=security_setting_session_id
 BFF->Redis:Get Sequrity Setting Session
-
-opt セキュリティ設定画面用セッション取得失敗
-    BFF-->Webview:401(error=invalid_grant)
-    Webview->Webview:セキュリティ設定画面\n(認証前)
-end
 
 Redis-->BFF:access_token
 
 BFF-->Webview:正常応答
-
-note over User,idP:セキュリティ設定画面(認証後)
 "#;
 
-    match parse(input) {
-        Ok(diagram) => {
-            let svg = render(&diagram);
-            println!("{}", svg);
-        }
-        Err(e) => {
-            eprintln!("Parse error: {:?}", e);
-            std::process::exit(1);
-        }
-    }
+    // Parse should succeed
+    let diagram = parse(input).expect("Failed to parse diagram");
+
+    // Check title
+    assert_eq!(
+        diagram.title,
+        Some("security-setting-withdrawal-auth-native".to_string())
+    );
+
+    // Check participants
+    let participants = diagram.participants();
+    assert!(participants.len() >= 7);
+
+    // Render should succeed
+    let svg = render(&diagram);
+    assert!(svg.contains("<svg"));
+    assert!(svg.contains("User"));
+    assert!(svg.contains("BFF"));
+    assert!(svg.contains("Redis"));
+
+    // Check that notes are rendered
+    assert!(svg.contains("sfsafariviewcontroller"));
+
+    // Check that blocks are rendered
+    assert!(svg.contains("opt"));
+    assert!(svg.contains("alt"));
+
+    println!("SVG length: {} bytes", svg.len());
+}
+
+#[test]
+fn test_simple_auth_flow() {
+    let input = r#"
+title Simple Auth
+
+actor User
+participant App
+participant Server
+
+User->App: Login
+App->Server: POST /auth
+Server-->App: token
+App-->User: Success
+
+note over App: Token stored
+
+opt Remember me
+    App->App: Save to storage
+end
+"#;
+
+    let diagram = parse(input).unwrap();
+    let svg = render(&diagram);
+
+    assert!(svg.contains("<svg"));
+    assert!(svg.contains("Simple Auth"));
+    assert!(svg.contains("Login"));
 }

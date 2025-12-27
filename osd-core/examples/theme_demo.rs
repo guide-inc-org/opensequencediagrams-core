@@ -1,4 +1,4 @@
-use guideline_core::{parse, render_with_config, Config, Theme};
+use osd_core::{parse, render_with_config, Config, Theme};
 use std::fs;
 
 fn main() {

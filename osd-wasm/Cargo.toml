@@ -1,16 +1,16 @@
 [package]
-name = "guideline-wasm"
+name = "osd-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "WebAssembly bindings for guideline"
+description = "WebAssembly bindings for OpenSequenceDiagrams"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-guideline-core = { path = "../guideline-core" }
+osd-core = { path = "../osd-core" }
 wasm-bindgen = { workspace = true }
 
 [profile.release]
