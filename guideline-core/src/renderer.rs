@@ -67,7 +67,7 @@ struct BlockBackground {
     height: f64,
 }
 
-/// Block label info for deferred rendering (rendered above lifelines)
+/// Block label info for deferred rendering (rendered above activations/lifelines)
 #[derive(Debug, Clone)]
 struct BlockLabel {
     x1: f64,
@@ -93,7 +93,7 @@ struct RenderState {
     total_width: f64,
     /// Collected block backgrounds for deferred rendering
     block_backgrounds: Vec<BlockBackground>,
-    /// Collected block labels for deferred rendering (above lifelines)
+    /// Collected block labels for deferred rendering (above activations/lifelines)
     block_labels: Vec<BlockLabel>,
     /// Footer style from diagram options
     footer_style: FooterStyle,
@@ -208,13 +208,27 @@ fn calculate_participant_gaps(
 
 impl RenderState {
     fn new(config: Config, participants: Vec<Participant>, items: &[Item], has_title: bool, footer_style: FooterStyle) -> Self {
+        let mut config = config;
+        let line_height = config.font_size + 2.0;
+        let mut required_header_height = config.header_height;
+        for p in &participants {
+            let lines = p.name.split("\\n").count();
+            let total_height = lines as f64 * line_height;
+            let needed = total_height + 10.0;
+            if needed > required_header_height {
+                required_header_height = needed;
+            }
+        }
+        if required_header_height > config.header_height {
+            config.header_height = required_header_height;
+        }
         // Calculate individual participant widths based on their names
         let mut participant_widths: HashMap<String, f64> = HashMap::new();
         let min_width = config.participant_width;
 
         for p in &participants {
             let text_width = estimate_text_width(&p.name, config.font_size);
-            let width = text_width.max(min_width);
+            let width = (text_width + 8.0).max(min_width);
             participant_widths.insert(p.id().to_string(), width);
         }
 
@@ -334,7 +348,7 @@ impl RenderState {
         self.block_backgrounds.push(BlockBackground { x, y, width, height });
     }
 
-    /// Add a block label to be rendered later (above lifelines)
+    /// Add a block label to be rendered later (above activations/lifelines)
     fn add_block_label(&mut self, x1: f64, start_y: f64, end_y: f64, x2: f64, kind: &str, label: &str, else_y: Option<f64>) {
         self.block_labels.push(BlockLabel {
             x1,
@@ -401,6 +415,7 @@ fn calculate_block_bounds_with_label(
     else_items: Option<&[Item]>,
     label: &str,
     kind: &str,
+    depth: usize,
     state: &RenderState,
 ) -> (f64, f64) {
     let mut all_items: Vec<&Item> = items.iter().collect();
@@ -422,26 +437,41 @@ fn calculate_block_bounds_with_label(
     // Calculate minimum width needed for label
     // Pentagon width + gap + condition label width + right margin
     let pentagon_width = (kind.len() as f64 * 8.0 + 12.0).max(35.0);
-    let label_char_width = 12.0; // Wider for CJK characters
+    let label_font_size = state.config.font_size - 1.0;
+    let label_padding_x = 6.0;
     let condition_width = if label.is_empty() {
         0.0
     } else {
-        label.chars().count() as f64 * label_char_width + 20.0 // [label] with brackets and margin
+        let condition_text = format!("[{}]", label);
+        let base_width = (estimate_text_width(&condition_text, label_font_size) - 16.0).max(0.0);
+        base_width + label_padding_x * 2.0
     };
     let min_label_width = pentagon_width + 8.0 + condition_width + 20.0; // Extra right margin
 
     // Ensure block is wide enough for the label
     let current_width = base_x2 - base_x1;
-    if current_width < min_label_width {
+    let (mut x1, mut x2) = if current_width < min_label_width {
         // Extend the right side to accommodate the label
         (base_x1, base_x1 + min_label_width)
     } else {
         (base_x1, base_x2)
+    };
+
+    // Inset nested blocks so they sit inside their parent with padding.
+    let nested_padding = depth as f64 * 8.0;
+    if nested_padding > 0.0 {
+        let available = x2 - x1;
+        let max_padding = ((available - min_label_width) / 2.0).max(0.0);
+        let inset = nested_padding.min(max_padding);
+        x1 += inset;
+        x2 -= inset;
     }
+
+    (x1, x2)
 }
 
 /// Pre-calculate block backgrounds by doing a dry run
-fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
+fn collect_block_backgrounds(state: &mut RenderState, items: &[Item], depth: usize) {
     for item in items {
         match item {
             Item::Message { text, from, to, arrow, .. } => {
@@ -491,10 +521,10 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
                 let start_y = state.current_y;
 
                 // Calculate bounds based on involved participants and label width
-                let (x1, x2) = calculate_block_bounds_with_label(items, else_items.as_deref(), label, kind.as_str(), state);
+                let (x1, x2) = calculate_block_bounds_with_label(items, else_items.as_deref(), label, kind.as_str(), depth, state);
 
                 state.current_y += state.config.row_height * 1.0; // Match render_block header space
-                collect_block_backgrounds(state, items);
+                collect_block_backgrounds(state, items, depth + 1);
 
                 let else_y = if else_items.is_some() {
                     Some(state.current_y)
@@ -504,7 +534,7 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
 
                 if let Some(else_items) = else_items {
                     state.current_y += state.config.row_height * 0.5;
-                    collect_block_backgrounds(state, else_items);
+                    collect_block_backgrounds(state, else_items, depth + 1);
                 }
 
                 let end_y = state.current_y + state.config.row_height * 0.3;
@@ -512,7 +542,7 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
 
                 // Collect this block's background
                 state.add_block_background(x1, start_y, x2 - x1, end_y - start_y);
-                // Collect this block's label for rendering above lifelines
+                // Collect this block's label for rendering above activations/lifelines
                 state.add_block_label(x1, start_y, end_y, x2, kind.as_str(), label, else_y);
             }
             _ => {}
@@ -538,7 +568,7 @@ fn render_block_backgrounds(svg: &mut String, state: &RenderState) {
 }
 
 /// Render all collected block labels (frame, pentagon, condition text, else divider)
-/// This is called AFTER lifelines are drawn so labels appear on top
+/// This is called AFTER activations are drawn so labels appear on top
 fn render_block_labels(svg: &mut String, state: &RenderState) {
     let theme = &state.config.theme;
 
@@ -563,7 +593,10 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
         let label_text = &bl.kind;
         let label_width = (label_text.len() as f64 * 8.0 + 12.0).max(35.0);
         let label_height = 20.0;
+        let label_text_offset = 14.0;
         let notch_size = 8.0;
+        let label_font_size = state.config.font_size - 1.0;
+        let label_padding_x = 6.0;
 
         // Pentagon path
         let pentagon_path = format!(
@@ -590,19 +623,37 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
             svg,
             r#"<text x="{x}" y="{y}" class="block-label">{kind}</text>"#,
             x = x1 + 5.0,
-            y = start_y + 14.0,
+            y = start_y + label_text_offset,
             kind = label_text
         )
         .unwrap();
 
         // Condition label (outside the pentagon)
         if !bl.label.is_empty() {
+            let condition_text = format!("[{}]", bl.label);
+            let text_x = x1 + label_width + 8.0;
+            let text_y = start_y + label_text_offset;
+            let base_width = (estimate_text_width(&condition_text, label_font_size) - 16.0).max(0.0);
+            let bg_width = base_width + label_padding_x * 2.0;
+
             writeln!(
                 svg,
-                r#"<text x="{x}" y="{y}" class="block-label">[{label}]</text>"#,
-                x = x1 + label_width + 8.0,
-                y = start_y + 14.0,
-                label = escape_xml(&bl.label)
+                r##"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{fill}" stroke="{stroke}" stroke-width="1"/>"##,
+                x = text_x - label_padding_x,
+                y = start_y,
+                w = bg_width,
+                h = label_height,
+                fill = theme.block_label_fill,
+                stroke = theme.block_stroke
+            )
+            .unwrap();
+
+            writeln!(
+                svg,
+                r#"<text x="{x}" y="{y}" class="block-label">{label}</text>"#,
+                x = text_x,
+                y = text_y,
+                label = escape_xml(&condition_text)
             )
             .unwrap();
         }
@@ -618,11 +669,32 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
                 c = theme.block_stroke
             )
             .unwrap();
+
+            let else_text = "[else]";
+            let else_text_x = x1 + 4.0;
+            let else_base_width = (estimate_text_width(else_text, label_font_size) - 16.0).max(0.0);
+            let else_bg_width = else_base_width + label_padding_x * 2.0;
+            let else_rect_y = else_y - label_height;
+            let else_text_y = else_rect_y + label_text_offset;
+
             writeln!(
                 svg,
-                r#"<text x="{x}" y="{y}" class="block-label">[else]</text>"#,
-                x = x1 + 4.0,
-                y = else_y - 4.0
+                r##"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{fill}" stroke="{stroke}" stroke-width="1"/>"##,
+                x = else_text_x - label_padding_x,
+                y = else_rect_y,
+                w = else_bg_width,
+                h = label_height,
+                fill = theme.block_label_fill,
+                stroke = theme.block_stroke
+            )
+            .unwrap();
+
+            writeln!(
+                svg,
+                r#"<text x="{x}" y="{y}" class="block-label">{label}</text>"#,
+                x = else_text_x,
+                y = else_text_y,
+                label = else_text
             )
             .unwrap();
         }
@@ -826,7 +898,7 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
 
     // Pre-calculate block backgrounds (dry run)
     state.current_y = state.content_start();
-    collect_block_backgrounds(&mut state, &diagram.items);
+    collect_block_backgrounds(&mut state, &diagram.items, 0);
 
     // Draw block backgrounds FIRST (behind lifelines)
     render_block_backgrounds(&mut svg, &state);
@@ -850,9 +922,6 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
         .unwrap();
     }
 
-    // Draw block labels AFTER lifelines so they appear on top
-    render_block_labels(&mut svg, &state);
-
     // Draw participant headers
     render_participant_headers(&mut svg, &state, header_y);
 
@@ -862,6 +931,9 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
 
     // Draw activation bars
     render_activations(&mut svg, &mut state, footer_y);
+
+    // Draw block labels AFTER activations so they appear on top
+    render_block_labels(&mut svg, &state);
 
     // Draw participant footers based on footer style option
     match state.footer_style {
@@ -1753,8 +1825,8 @@ fn render_block(
     // Set current_y to end of block + margin
     state.current_y = end_y + state.config.row_height * 0.5;
 
-    // Block frame, labels, and else separators are rendered earlier by render_block_labels()
-    // which is called after lifelines are drawn, so labels appear on top of lifelines
+    // Block frame, labels, and else separators are rendered later by render_block_labels()
+    // which is called after activations are drawn, so labels appear on top
 }
 
 fn render_activations(svg: &mut String, state: &mut RenderState, footer_y: f64) {
