@@ -10,6 +10,10 @@ use std::fmt::Write;
 pub struct Config {
     /// Padding around the diagram
     pub padding: f64,
+    /// Left margin for diagram content
+    pub left_margin: f64,
+    /// Right margin for diagram content
+    pub right_margin: f64,
     /// Space between participants
     pub participant_gap: f64,
     /// Height of participant header/footer box
@@ -35,16 +39,18 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            padding: 20.0,
-            participant_gap: 150.0,
-            header_height: 40.0,
-            row_height: 50.0,
-            participant_width: 100.0,
-            font_size: 14.0,
+            padding: 10.5,
+            left_margin: 122.5,
+            right_margin: 15.0,
+            participant_gap: 200.0,
+            header_height: 108.0,
+            row_height: 32.0,
+            participant_width: 90.0,
+            font_size: 12.0,
             activation_width: 10.0,
-            note_padding: 8.0,
-            block_margin: 10.0,
-            title_height: 30.0,
+            note_padding: 6.0,
+            block_margin: 5.0,
+            title_height: 100.0,
             theme: Theme::default(),
         }
     }
@@ -97,23 +103,176 @@ struct RenderState {
     block_labels: Vec<BlockLabel>,
     /// Footer style from diagram options
     footer_style: FooterStyle,
+    /// Tracks whether the first return message in an else branch needs extra spacing
+    else_return_pending: Vec<bool>,
+    /// Tracks whether a serial block needs extra spacing after its first row
+    serial_first_row_pending: Vec<bool>,
+    /// Tracks nested parallel depth for serial row spacing
+    parallel_depth: usize,
+}
+
+const TEXT_WIDTH_PADDING: f64 = 41.0;
+const TEXT_WIDTH_SCALE: f64 = 1.3;
+const MESSAGE_WIDTH_PADDING: f64 = 8.0;
+const MESSAGE_WIDTH_SCALE: f64 = 0.9;
+const DELAY_UNIT: f64 = 18.0;
+const BLOCK_LABEL_HEIGHT: f64 = 24.0;
+const BLOCK_FOOTER_PADDING_LEVEL1: f64 = 0.90625;
+const BLOCK_FOOTER_PADDING_DEEP: f64 = 0.90625;
+const BLOCK_FOOTER_PADDING_TOP_FACTOR: f64 = 1.28125;
+const BLOCK_ELSE_SPACING_LEVEL1: f64 = 1.1875;
+const BLOCK_ELSE_SPACING_DEEP: f64 = 1.15625;
+const BLOCK_ELSE_TOP_SPACING_FACTOR: f64 = 1.15625;
+const BLOCK_NESTED_HEADER_ADJUST: f64 = 18.0;
+const BLOCK_NESTED_FRAME_SHIFT: f64 = 18.0;
+const PARALLEL_BLOCK_GAP: f64 = 22.0;
+const MESSAGE_SPACING_MULT: f64 = 0.5625;
+const SELF_MESSAGE_MIN_SPACING: f64 = 78.0;
+const SELF_MESSAGE_GAP: f64 = 4.0;
+const CREATE_MESSAGE_SPACING: f64 = 41.0;
+const DESTROY_SPACING: f64 = 15.0;
+const NOTE_PADDING: f64 = 9.5;
+const NOTE_LINE_HEIGHT_EXTRA: f64 = 6.0;
+const NOTE_MARGIN: f64 = 12.6;
+const STATE_LINE_HEIGHT_EXTRA: f64 = 11.0;
+const REF_LINE_HEIGHT_EXTRA: f64 = 16.333333;
+const ELSE_RETURN_GAP: f64 = 1.0;
+const SERIAL_FIRST_ROW_GAP: f64 = 0.0;
+const SERIAL_FIRST_ROW_PARALLEL_GAP: f64 = 1.0;
+const SERIAL_SELF_MESSAGE_ADJUST: f64 = 1.0;
+const ACTIVATION_START_GAP: f64 = 0.0;
+const ACTIVATION_CHAIN_GAP: f64 = 1.0;
+const REF_EXTRA_GAP: f64 = 2.5;
+const SELF_MESSAGE_ACTIVE_ADJUST: f64 = 1.0;
+const STATE_EXTRA_GAP: f64 = 0.0;
+
+fn block_header_space(config: &Config, depth: usize) -> f64 {
+    let base = config.row_height + BLOCK_LABEL_HEIGHT;
+    if depth == 0 {
+        base
+    } else {
+        (base - BLOCK_NESTED_HEADER_ADJUST).max(BLOCK_LABEL_HEIGHT)
+    }
+}
+
+fn block_frame_shift(depth: usize) -> f64 {
+    if depth == 0 {
+        0.0
+    } else if depth == 1 {
+        BLOCK_NESTED_FRAME_SHIFT
+    } else {
+        BLOCK_NESTED_FRAME_SHIFT
+    }
+}
+
+fn block_footer_padding(config: &Config, depth: usize) -> f64 {
+    let factor = if depth == 0 {
+        BLOCK_FOOTER_PADDING_TOP_FACTOR
+    } else if depth == 1 {
+        BLOCK_FOOTER_PADDING_LEVEL1
+    } else {
+        BLOCK_FOOTER_PADDING_DEEP
+    };
+    config.row_height * factor
+}
+
+fn block_else_spacing(config: &Config, depth: usize) -> f64 {
+    if depth == 0 {
+        config.row_height * BLOCK_ELSE_TOP_SPACING_FACTOR
+    } else if depth == 1 {
+        config.row_height * BLOCK_ELSE_SPACING_LEVEL1
+    } else {
+        config.row_height * BLOCK_ELSE_SPACING_DEEP
+    }
+}
+
+fn message_spacing_line_height(config: &Config) -> f64 {
+    config.row_height * MESSAGE_SPACING_MULT
+}
+
+fn self_message_spacing(config: &Config, lines: usize) -> f64 {
+    let line_height = config.font_size + 4.0;
+    let text_block_height = lines as f64 * line_height;
+    let loop_height = (text_block_height + 10.0).max(25.0);
+    let base = loop_height + SELF_MESSAGE_GAP;
+    if lines >= 3 {
+        base.max(SELF_MESSAGE_MIN_SPACING)
+    } else {
+        base
+    }
+}
+
+fn note_line_height(config: &Config) -> f64 {
+    config.font_size + NOTE_LINE_HEIGHT_EXTRA
+}
+
+fn note_padding(_config: &Config) -> f64 {
+    NOTE_PADDING
+}
+
+fn item_pre_gap(config: &Config) -> f64 {
+    config.font_size + 1.0
+}
+
+fn item_pre_shift(config: &Config) -> f64 {
+    (config.row_height - item_pre_gap(config)).max(0.0)
+}
+
+fn serial_first_row_gap(parallel_depth: usize) -> f64 {
+    if parallel_depth > 0 {
+        SERIAL_FIRST_ROW_PARALLEL_GAP
+    } else {
+        SERIAL_FIRST_ROW_GAP
+    }
+}
+
+fn state_line_height(config: &Config) -> f64 {
+    config.font_size + STATE_LINE_HEIGHT_EXTRA
+}
+
+fn ref_line_height(config: &Config) -> f64 {
+    config.font_size + REF_LINE_HEIGHT_EXTRA
+}
+
+fn block_has_frame(kind: &BlockKind) -> bool {
+    !matches!(kind, BlockKind::Parallel | BlockKind::Serial)
+}
+
+fn block_is_parallel(kind: &BlockKind) -> bool {
+    matches!(kind, BlockKind::Parallel)
+}
+
+fn parallel_needs_gap(items: &[Item]) -> bool {
+    items.iter().any(|item| matches!(item, Item::Block { .. }))
+}
+
+fn text_char_weight(c: char) -> f64 {
+    if c.is_ascii() {
+        if c.is_uppercase() { 0.7 } else { 0.5 }
+    } else {
+        1.0 // CJK and other characters are wider
+    }
+}
+
+fn max_weighted_line(text: &str) -> f64 {
+    text.split("\\n")
+        .map(|line| line.chars().map(text_char_weight).sum::<f64>())
+        .fold(0.0_f64, |a, b| a.max(b))
 }
 
 /// Estimate text width in pixels (rough approximation)
 fn estimate_text_width(text: &str, font_size: f64) -> f64 {
-    // Handle multiline text - take the longest line
-    let max_line_len = text.split("\\n").map(|line| {
-        // Count characters, accounting for different widths
-        line.chars().map(|c| {
-            if c.is_ascii() {
-                if c.is_uppercase() { 0.7 } else { 0.5 }
-            } else {
-                1.0 // CJK and other characters are wider
-            }
-        }).sum::<f64>()
-    }).fold(0.0_f64, |a, b| a.max(b));
+    let weighted = max_weighted_line(text);
+    weighted * font_size * TEXT_WIDTH_SCALE + TEXT_WIDTH_PADDING
+}
 
-    max_line_len * font_size * 1.0 + 16.0 // Add padding
+fn estimate_message_width(text: &str, font_size: f64) -> f64 {
+    let weighted = max_weighted_line(text);
+    weighted * font_size * MESSAGE_WIDTH_SCALE + MESSAGE_WIDTH_PADDING
+}
+
+fn block_tab_width(kind: &str) -> f64 {
+    (kind.chars().count() as f64 * 12.0 + 21.0).max(57.0)
 }
 
 /// Calculate dynamic gaps between participants based on message text lengths
@@ -156,8 +315,7 @@ fn calculate_participant_gaps(
                                 (to_idx, from_idx)
                             };
 
-                            // Calculate text width (estimate ~8px per char, more for CJK)
-                            let text_width = text.chars().count() as f64 * 8.0 + 40.0;
+                            let text_width = estimate_message_width(text, config.font_size);
 
                             // Distribute needed width across gaps between the participants
                             let gap_count = (max_idx - min_idx) as f64;
@@ -187,8 +345,8 @@ fn calculate_participant_gaps(
 
     // Also consider participant name lengths
     for i in 0..participants.len() - 1 {
-        let name1_width = participants[i].name.chars().count() as f64 * 8.0;
-        let name2_width = participants[i + 1].name.chars().count() as f64 * 8.0;
+        let name1_width = estimate_message_width(&participants[i].name, config.font_size);
+        let name2_width = estimate_message_width(&participants[i + 1].name, config.font_size);
         let needed_for_names = (name1_width + name2_width) / 2.0 + 20.0;
         if needed_for_names > gaps[i] {
             gaps[i] = needed_for_names;
@@ -196,7 +354,7 @@ fn calculate_participant_gaps(
     }
 
     // Cap maximum gap
-    let max_gap = config.participant_gap * 2.0;
+    let max_gap = config.participant_gap * 3.0;
     for gap in &mut gaps {
         if *gap > max_gap {
             *gap = max_gap;
@@ -235,9 +393,9 @@ impl RenderState {
         let gaps = calculate_participant_gaps(&participants, items, &config);
 
         // Left margin for notes/actions on leftmost participant
-        let left_margin = 100.0;
+        let left_margin = config.left_margin;
         // Right margin for self-loops and notes on rightmost participant
-        let right_margin = 140.0;
+        let right_margin = config.right_margin;
 
         let mut participant_x = HashMap::new();
         let first_width = participants.first()
@@ -277,6 +435,9 @@ impl RenderState {
             block_backgrounds: Vec::new(),
             block_labels: Vec::new(),
             footer_style,
+            else_return_pending: Vec::new(),
+            serial_first_row_pending: Vec::new(),
+            parallel_depth: 0,
         }
     }
 
@@ -286,6 +447,61 @@ impl RenderState {
 
     fn get_x(&self, name: &str) -> f64 {
         *self.participant_x.get(name).unwrap_or(&0.0)
+    }
+
+    fn push_else_return_pending(&mut self) {
+        self.else_return_pending.push(true);
+    }
+
+    fn pop_else_return_pending(&mut self) {
+        self.else_return_pending.pop();
+    }
+
+    fn apply_else_return_gap(&mut self, arrow: &Arrow) {
+        if let Some(pending) = self.else_return_pending.last_mut() {
+            if *pending && matches!(arrow.line, LineStyle::Dashed) {
+                self.current_y += ELSE_RETURN_GAP;
+                *pending = false;
+            }
+        }
+    }
+
+    fn push_serial_first_row_pending(&mut self) {
+        self.serial_first_row_pending.push(true);
+    }
+
+    fn pop_serial_first_row_pending(&mut self) {
+        self.serial_first_row_pending.pop();
+    }
+
+    fn in_serial_block(&self) -> bool {
+        !self.serial_first_row_pending.is_empty()
+    }
+
+    fn apply_serial_first_row_gap(&mut self) {
+        if let Some(pending) = self.serial_first_row_pending.last_mut() {
+            if *pending {
+                self.current_y += serial_first_row_gap(self.parallel_depth);
+                *pending = false;
+            }
+        }
+    }
+
+    fn push_parallel(&mut self) {
+        self.parallel_depth += 1;
+    }
+
+    fn pop_parallel(&mut self) {
+        if self.parallel_depth > 0 {
+            self.parallel_depth -= 1;
+        }
+    }
+
+    fn active_activation_count(&self) -> usize {
+        self.activations
+            .values()
+            .map(|acts| acts.iter().filter(|(_, end)| end.is_none()).count())
+            .sum()
     }
 
     fn diagram_width(&self) -> f64 {
@@ -333,7 +549,7 @@ impl RenderState {
     }
 
     fn content_start(&self) -> f64 {
-        self.header_top() + self.config.header_height + 20.0
+        self.header_top() + self.config.header_height + self.config.row_height
     }
 
     fn next_number(&mut self) -> Option<u32> {
@@ -362,49 +578,71 @@ impl RenderState {
     }
 }
 
-/// Find participants involved in a list of items (returns min and max x positions)
-fn find_involved_participants(items: &[Item], state: &RenderState) -> Option<(f64, f64)> {
-    let mut min_x: Option<f64> = None;
-    let mut max_x: Option<f64> = None;
+/// Find participants involved in a list of items (returns min/max edges and whether leftmost is included)
+fn find_involved_participants(items: &[Item], state: &RenderState) -> Option<(f64, f64, bool)> {
+    let mut min_left: Option<f64> = None;
+    let mut max_right: Option<f64> = None;
+    let leftmost_id = state.participants.first().map(|p| p.id()).unwrap_or("");
+    let mut includes_leftmost = false;
 
-    fn update_bounds(participant: &str, state: &RenderState, min_x: &mut Option<f64>, max_x: &mut Option<f64>) {
+    fn update_bounds(
+        participant: &str,
+        state: &RenderState,
+        min_left: &mut Option<f64>,
+        max_right: &mut Option<f64>,
+        includes_leftmost: &mut bool,
+        leftmost_id: &str,
+    ) {
         let x = state.get_x(participant);
         if x > 0.0 {
-            *min_x = Some(min_x.map_or(x, |m| m.min(x)));
-            *max_x = Some(max_x.map_or(x, |m| m.max(x)));
+            let width = state.get_participant_width(participant);
+            let left = x - width / 2.0;
+            let right = x + width / 2.0;
+            *min_left = Some(min_left.map_or(left, |m| m.min(left)));
+            *max_right = Some(max_right.map_or(right, |m| m.max(right)));
+            if participant == leftmost_id {
+                *includes_leftmost = true;
+            }
         }
     }
 
-    fn process_items(items: &[Item], state: &RenderState, min_x: &mut Option<f64>, max_x: &mut Option<f64>) {
+    fn process_items(
+        items: &[Item],
+        state: &RenderState,
+        min_left: &mut Option<f64>,
+        max_right: &mut Option<f64>,
+        includes_leftmost: &mut bool,
+        leftmost_id: &str,
+    ) {
         for item in items {
             match item {
                 Item::Message { from, to, .. } => {
-                    update_bounds(from, state, min_x, max_x);
-                    update_bounds(to, state, min_x, max_x);
+                    update_bounds(from, state, min_left, max_right, includes_leftmost, leftmost_id);
+                    update_bounds(to, state, min_left, max_right, includes_leftmost, leftmost_id);
                 }
                 Item::Note { participants, .. } => {
                     for p in participants {
-                        update_bounds(p, state, min_x, max_x);
+                        update_bounds(p, state, min_left, max_right, includes_leftmost, leftmost_id);
                     }
                 }
                 Item::Block { items, else_items, .. } => {
-                    process_items(items, state, min_x, max_x);
+                    process_items(items, state, min_left, max_right, includes_leftmost, leftmost_id);
                     if let Some(else_items) = else_items {
-                        process_items(else_items, state, min_x, max_x);
+                        process_items(else_items, state, min_left, max_right, includes_leftmost, leftmost_id);
                     }
                 }
                 Item::Activate { participant } | Item::Deactivate { participant } | Item::Destroy { participant } => {
-                    update_bounds(participant, state, min_x, max_x);
+                    update_bounds(participant, state, min_left, max_right, includes_leftmost, leftmost_id);
                 }
                 _ => {}
             }
         }
     }
 
-    process_items(items, state, &mut min_x, &mut max_x);
+    process_items(items, state, &mut min_left, &mut max_right, &mut includes_leftmost, leftmost_id);
 
-    match (min_x, max_x) {
-        (Some(min), Some(max)) => Some((min, max)),
+    match (min_left, max_right) {
+        (Some(min), Some(max)) => Some((min, max, includes_leftmost)),
         _ => None,
     }
 }
@@ -426,24 +664,26 @@ fn calculate_block_bounds_with_label(
     // Convert Vec<&Item> to slice for find_involved_participants
     let items_slice: Vec<Item> = all_items.into_iter().cloned().collect();
 
-    let (base_x1, base_x2) = if let Some((min_x, max_x)) = find_involved_participants(&items_slice, state) {
-        let margin = state.config.block_margin + state.config.participant_width / 2.0 + 10.0;
-        (min_x - margin, max_x + margin)
+    let (base_x1, base_x2, includes_leftmost) = if let Some((min_left, max_right, includes_leftmost)) =
+        find_involved_participants(&items_slice, state)
+    {
+        let margin = state.config.block_margin;
+        (min_left - margin, max_right + margin, includes_leftmost)
     } else {
         // Fallback to full width if no participants found
-        (state.block_left(), state.block_right())
+        (state.block_left(), state.block_right(), false)
     };
 
     // Calculate minimum width needed for label
     // Pentagon width + gap + condition label width + right margin
-    let pentagon_width = (kind.len() as f64 * 8.0 + 12.0).max(35.0);
+    let pentagon_width = block_tab_width(kind);
     let label_font_size = state.config.font_size - 1.0;
     let label_padding_x = 6.0;
     let condition_width = if label.is_empty() {
         0.0
     } else {
         let condition_text = format!("[{}]", label);
-        let base_width = (estimate_text_width(&condition_text, label_font_size) - 16.0).max(0.0);
+        let base_width = (estimate_text_width(&condition_text, label_font_size) - TEXT_WIDTH_PADDING).max(0.0);
         base_width + label_padding_x * 2.0
     };
     let min_label_width = pentagon_width + 8.0 + condition_width + 20.0; // Extra right margin
@@ -458,7 +698,7 @@ fn calculate_block_bounds_with_label(
     };
 
     // Inset nested blocks so they sit inside their parent with padding.
-    let nested_padding = depth as f64 * 8.0;
+    let nested_padding = depth as f64 * 20.0;
     if nested_padding > 0.0 {
         let available = x2 - x1;
         let max_padding = ((available - min_label_width) / 2.0).max(0.0);
@@ -467,64 +707,160 @@ fn calculate_block_bounds_with_label(
         x2 -= inset;
     }
 
+    if depth == 0 && includes_leftmost {
+        x1 = x1.min(state.config.padding);
+    }
+
     (x1, x2)
 }
 
 /// Pre-calculate block backgrounds by doing a dry run
-fn collect_block_backgrounds(state: &mut RenderState, items: &[Item], depth: usize) {
+fn collect_block_backgrounds(
+    state: &mut RenderState,
+    items: &[Item],
+    depth: usize,
+    active_activation_count: &mut usize,
+) {
     for item in items {
         match item {
-            Item::Message { text, from, to, arrow, .. } => {
-                let is_self = from == to;
-                let lines: Vec<&str> = text.split("\\n").collect();
-                let line_height = state.config.font_size + 4.0;
-                let extra_height = if lines.len() > 1 {
-                    (lines.len() - 1) as f64 * line_height
+            Item::Message { text, from, to, arrow, activate, deactivate, create, .. } => {
+                state.apply_else_return_gap(arrow);
+                let chain_gap = if *activate && depth == 0 && *active_activation_count == 1 {
+                    ACTIVATION_CHAIN_GAP
                 } else {
                     0.0
                 };
-                let delay_offset = arrow.delay.map(|d| d as f64 * 10.0).unwrap_or(0.0);
+                let is_self = from == to;
+                let lines: Vec<&str> = text.split("\\n").collect();
+                let delay_offset = arrow.delay.map(|d| d as f64 * DELAY_UNIT).unwrap_or(0.0);
 
                 if is_self {
-                    state.current_y += state.config.row_height + extra_height;
+                    let mut spacing = self_message_spacing(&state.config, lines.len());
+                    if state.in_serial_block() {
+                        spacing -= SERIAL_SELF_MESSAGE_ADJUST;
+                    }
+                    if *active_activation_count > 0 {
+                        spacing -= SELF_MESSAGE_ACTIVE_ADJUST;
+                    }
+                    state.current_y += spacing;
                 } else {
+                    let spacing_line_height = message_spacing_line_height(&state.config);
+                    let extra_height = if lines.len() > 1 {
+                        (lines.len() - 1) as f64 * spacing_line_height
+                    } else {
+                        0.0
+                    };
                     if lines.len() > 1 {
                         state.current_y += extra_height;
                     }
                     state.current_y += state.config.row_height + delay_offset;
                 }
+
+                if *create {
+                    state.current_y += CREATE_MESSAGE_SPACING;
+                }
+
+                state.apply_serial_first_row_gap();
+
+                if *activate && depth == 0 {
+                    state.current_y += ACTIVATION_START_GAP;
+                }
+                if chain_gap > 0.0 {
+                    state.current_y += chain_gap;
+                }
+                if *activate {
+                    *active_activation_count += 1;
+                }
+                if *deactivate && *active_activation_count > 0 {
+                    *active_activation_count -= 1;
+                }
             }
             Item::Note { text, .. } => {
                 let lines: Vec<&str> = text.split("\\n").collect();
-                let line_height = state.config.font_size + 4.0;
-                let note_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
-                state.current_y += note_height.max(state.config.row_height) + 15.0;
+                let line_height = note_line_height(&state.config);
+                let note_height = note_padding(&state.config) * 2.0 + lines.len() as f64 * line_height;
+                state.current_y += note_height.max(state.config.row_height) + NOTE_MARGIN;
             }
             Item::State { text, .. } => {
                 let lines: Vec<&str> = text.split("\\n").collect();
-                let line_height = state.config.font_size + 4.0;
+                let line_height = state_line_height(&state.config);
                 let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
-                state.current_y += box_height.max(state.config.row_height) + 10.0;
+                state.current_y += box_height + item_pre_gap(&state.config) + STATE_EXTRA_GAP;
             }
             Item::Ref { text, .. } => {
                 let lines: Vec<&str> = text.split("\\n").collect();
-                let line_height = state.config.font_size + 4.0;
+                let line_height = ref_line_height(&state.config);
                 let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
-                state.current_y += box_height.max(state.config.row_height) + 15.0;
+                state.current_y += box_height + item_pre_gap(&state.config) + REF_EXTRA_GAP;
             }
             Item::Description { text } => {
                 let lines: Vec<&str> = text.split("\\n").collect();
                 let line_height = state.config.font_size + 4.0;
                 state.current_y += lines.len() as f64 * line_height + 10.0;
             }
+            Item::Destroy { .. } => {
+                state.current_y += DESTROY_SPACING;
+            }
+            Item::Activate { .. } => {
+                *active_activation_count += 1;
+            }
+            Item::Deactivate { .. } => {
+                if *active_activation_count > 0 {
+                    *active_activation_count -= 1;
+                }
+            }
             Item::Block { kind, label, items, else_items } => {
+                if block_is_parallel(kind) {
+                    state.push_parallel();
+                    let start_y = state.current_y;
+                    let mut max_end_y = start_y;
+                    let start_activation_count = *active_activation_count;
+                    for item in items {
+                        state.current_y = start_y;
+                        *active_activation_count = start_activation_count;
+                        collect_block_backgrounds(state, std::slice::from_ref(item), depth, active_activation_count);
+                        if state.current_y > max_end_y {
+                            max_end_y = state.current_y;
+                        }
+                    }
+                    *active_activation_count = start_activation_count;
+                    let gap = if parallel_needs_gap(items) {
+                        PARALLEL_BLOCK_GAP
+                    } else {
+                        0.0
+                    };
+                    state.current_y = max_end_y + gap;
+                    state.pop_parallel();
+                    continue;
+                }
+
+                if matches!(kind, BlockKind::Serial) {
+                    state.push_serial_first_row_pending();
+                    collect_block_backgrounds(state, items, depth, active_activation_count);
+                    if let Some(else_items) = else_items {
+                        collect_block_backgrounds(state, else_items, depth, active_activation_count);
+                    }
+                    state.pop_serial_first_row_pending();
+                    continue;
+                }
+
+                if !block_has_frame(kind) {
+                    collect_block_backgrounds(state, items, depth, active_activation_count);
+                    if let Some(else_items) = else_items {
+                        collect_block_backgrounds(state, else_items, depth, active_activation_count);
+                    }
+                    continue;
+                }
+
                 let start_y = state.current_y;
+                let frame_shift = block_frame_shift(depth);
+                let frame_start_y = start_y - frame_shift;
 
                 // Calculate bounds based on involved participants and label width
                 let (x1, x2) = calculate_block_bounds_with_label(items, else_items.as_deref(), label, kind.as_str(), depth, state);
 
-                state.current_y += state.config.row_height * 1.0; // Match render_block header space
-                collect_block_backgrounds(state, items, depth + 1);
+                state.current_y += block_header_space(&state.config, depth);
+                collect_block_backgrounds(state, items, depth + 1, active_activation_count);
 
                 let else_y = if else_items.is_some() {
                     Some(state.current_y)
@@ -533,17 +869,20 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item], depth: usi
                 };
 
                 if let Some(else_items) = else_items {
-                    state.current_y += state.config.row_height * 0.5;
-                    collect_block_backgrounds(state, else_items, depth + 1);
+                    state.push_else_return_pending();
+                    state.current_y += block_else_spacing(&state.config, depth);
+                    collect_block_backgrounds(state, else_items, depth + 1, active_activation_count);
+                    state.pop_else_return_pending();
                 }
 
-                let end_y = state.current_y + state.config.row_height * 0.3;
+                let end_y = state.current_y - state.config.row_height + block_footer_padding(&state.config, depth);
+                let frame_end_y = end_y - frame_shift;
                 state.current_y = end_y + state.config.row_height * 0.5;
 
                 // Collect this block's background
-                state.add_block_background(x1, start_y, x2 - x1, end_y - start_y);
+                state.add_block_background(x1, frame_start_y, x2 - x1, frame_end_y - frame_start_y);
                 // Collect this block's label for rendering above activations/lifelines
-                state.add_block_label(x1, start_y, end_y, x2, kind.as_str(), label, else_y);
+                state.add_block_label(x1, frame_start_y, frame_end_y, x2, kind.as_str(), label, else_y);
             }
             _ => {}
         }
@@ -591,10 +930,10 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
 
         // Pentagon/tab-shaped label (WSD style)
         let label_text = &bl.kind;
-        let label_width = (label_text.len() as f64 * 8.0 + 12.0).max(35.0);
-        let label_height = 20.0;
-        let label_text_offset = 14.0;
-        let notch_size = 8.0;
+        let label_width = block_tab_width(label_text);
+        let label_height = BLOCK_LABEL_HEIGHT;
+        let label_text_offset = 16.0;
+        let notch_size = 5.0;
         let label_font_size = state.config.font_size - 1.0;
         let label_padding_x = 6.0;
 
@@ -633,7 +972,7 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
             let condition_text = format!("[{}]", bl.label);
             let text_x = x1 + label_width + 8.0;
             let text_y = start_y + label_text_offset;
-            let base_width = (estimate_text_width(&condition_text, label_font_size) - 16.0).max(0.0);
+            let base_width = (estimate_text_width(&condition_text, label_font_size) - TEXT_WIDTH_PADDING).max(0.0);
             let bg_width = base_width + label_padding_x * 2.0;
 
             writeln!(
@@ -672,7 +1011,7 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
 
             let else_text = "[else]";
             let else_text_x = x1 + 4.0;
-            let else_base_width = (estimate_text_width(else_text, label_font_size) - 16.0).max(0.0);
+            let else_base_width = (estimate_text_width(else_text, label_font_size) - TEXT_WIDTH_PADDING).max(0.0);
             let else_bg_width = else_base_width + label_padding_x * 2.0;
             let else_rect_y = else_y - label_height;
             let else_text_y = else_rect_y + label_text_offset;
@@ -715,13 +1054,17 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
     let mut svg = String::new();
 
     // Pre-calculate height
-    let content_height = calculate_height(&diagram.items, &state.config);
+    let content_height = calculate_height(&diagram.items, &state.config, 0);
     let title_space = if has_title { state.config.title_height } else { 0.0 };
+    let footer_space = match footer_style {
+        FooterStyle::Box => state.config.header_height,
+        FooterStyle::Bar | FooterStyle::None => 0.0,
+    };
     let total_height = state.config.padding * 2.0
         + title_space
-        + state.config.header_height * 2.0  // header + footer
-        + content_height
-        + 40.0;  // spacing
+        + state.config.header_height
+        + footer_space
+        + content_height;
     let total_width = state.diagram_width();
 
     // SVG header
@@ -882,11 +1225,12 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
 
     // Title
     if let Some(title) = &diagram.title {
+        let title_y = state.config.padding + state.config.font_size + 10.0;
         writeln!(
             &mut svg,
             r#"<text x="{x}" y="{y}" class="title">{t}</text>"#,
             x = total_width / 2.0,
-            y = state.config.padding + state.config.title_height / 2.0 + 5.0,
+            y = title_y,
             t = escape_xml(title)
         )
         .unwrap();
@@ -894,11 +1238,15 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
 
     // Calculate footer position
     let header_y = state.header_top();
-    let footer_y = total_height - state.config.padding - state.config.header_height;
+    let footer_y = match footer_style {
+        FooterStyle::Box => total_height - state.config.padding - state.config.header_height,
+        FooterStyle::Bar | FooterStyle::None => total_height - state.config.padding,
+    };
 
     // Pre-calculate block backgrounds (dry run)
     state.current_y = state.content_start();
-    collect_block_backgrounds(&mut state, &diagram.items, 0);
+    let mut active_activation_count = 0;
+    collect_block_backgrounds(&mut state, &diagram.items, 0, &mut active_activation_count);
 
     // Draw block backgrounds FIRST (behind lifelines)
     render_block_backgrounds(&mut svg, &state);
@@ -927,7 +1275,7 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
 
     // Render items
     state.current_y = state.content_start();
-    render_items(&mut svg, &mut state, &diagram.items);
+    render_items(&mut svg, &mut state, &diagram.items, 0);
 
     // Draw activation bars
     render_activations(&mut svg, &mut state, footer_y);
@@ -963,48 +1311,176 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
     svg
 }
 
-fn calculate_height(items: &[Item], config: &Config) -> f64 {
-    let mut height = 0.0;
-    let line_height = config.font_size + 4.0;
-    for item in items {
-        match item {
-            Item::Message { text, arrow, .. } => {
-                let lines = text.split("\\n").count();
-                let delay_offset = arrow.delay.map(|d| d as f64 * 10.0).unwrap_or(0.0);
-                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + delay_offset;
-            }
-            Item::Note { text, .. } => {
-                let lines = text.split("\\n").count();
-                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + 15.0;
-            }
-            Item::State { text, .. } => {
-                let lines = text.split("\\n").count();
-                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + 10.0;
-            }
-            Item::Ref { text, .. } => {
-                let lines = text.split("\\n").count();
-                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + 15.0;
-            }
-            Item::Description { text } => {
-                let lines = text.split("\\n").count();
-                height += lines as f64 * line_height + 10.0;
-            }
-            Item::Block { items, else_items, .. } => {
-                height += config.row_height * 1.0; // Block header margin (space for pentagon label + gap)
-                height += calculate_height(items, config);
-                if let Some(else_items) = else_items {
-                    height += config.row_height * 0.5; // Else separator
-                    height += calculate_height(else_items, config);
+fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
+    fn inner(
+        items: &[Item],
+        config: &Config,
+        depth: usize,
+        else_pending: &mut Vec<bool>,
+        serial_pending: &mut Vec<bool>,
+        active_activation_count: &mut usize,
+        parallel_depth: &mut usize,
+    ) -> f64 {
+        let mut height = 0.0;
+        let line_height = config.font_size + 4.0;
+        for item in items {
+            match item {
+                Item::Message { from, to, text, arrow, create, activate, deactivate, .. } => {
+                    if let Some(pending) = else_pending.last_mut() {
+                        if *pending && matches!(arrow.line, LineStyle::Dashed) {
+                            height += ELSE_RETURN_GAP;
+                            *pending = false;
+                        }
+                    }
+                    let chain_gap = if *activate && depth == 0 && *active_activation_count == 1 {
+                        ACTIVATION_CHAIN_GAP
+                    } else {
+                        0.0
+                    };
+                    let is_self = from == to;
+                    let lines = text.split("\\n").count();
+                    let delay_offset = arrow.delay.map(|d| d as f64 * DELAY_UNIT).unwrap_or(0.0);
+                    if is_self {
+                        let mut spacing = self_message_spacing(config, lines);
+                        if !serial_pending.is_empty() {
+                            spacing -= SERIAL_SELF_MESSAGE_ADJUST;
+                        }
+                        if *active_activation_count > 0 {
+                            spacing -= SELF_MESSAGE_ACTIVE_ADJUST;
+                        }
+                        height += spacing;
+                    } else {
+                        let spacing_line_height = message_spacing_line_height(config);
+                        height += config.row_height + (lines.saturating_sub(1)) as f64 * spacing_line_height + delay_offset;
+                    }
+                    if *create {
+                        height += CREATE_MESSAGE_SPACING;
+                    }
+                    if let Some(pending) = serial_pending.last_mut() {
+                        if *pending {
+                            height += serial_first_row_gap(*parallel_depth);
+                            *pending = false;
+                        }
+                    }
+                    if *activate && depth == 0 {
+                        height += ACTIVATION_START_GAP;
+                    }
+                    height += chain_gap;
+                    if *activate {
+                        *active_activation_count += 1;
+                    }
+                    if *deactivate && *active_activation_count > 0 {
+                        *active_activation_count -= 1;
+                    }
                 }
-                height += config.row_height * 0.8; // Block footer + margin after block
+                Item::Note { text, .. } => {
+                    let lines = text.split("\\n").count();
+                    let note_height = note_padding(config) * 2.0 + lines as f64 * note_line_height(config);
+                    height += note_height.max(config.row_height) + NOTE_MARGIN;
+                }
+                Item::State { text, .. } => {
+                    let lines = text.split("\\n").count();
+                    let box_height = config.note_padding * 2.0 + lines as f64 * state_line_height(config);
+                    height += box_height + item_pre_gap(config) + STATE_EXTRA_GAP;
+                }
+                Item::Ref { text, .. } => {
+                    let lines = text.split("\\n").count();
+                    let box_height = config.note_padding * 2.0 + lines as f64 * ref_line_height(config);
+                    height += box_height + item_pre_gap(config) + REF_EXTRA_GAP;
+                }
+                Item::Description { text } => {
+                    let lines = text.split("\\n").count();
+                    height += lines as f64 * line_height + 10.0;
+                }
+                Item::Block { kind, items, else_items, .. } => {
+                    if block_is_parallel(kind) {
+                        let mut max_branch_height = 0.0;
+                        let base_activation_count = *active_activation_count;
+                        *parallel_depth += 1;
+                        for item in items {
+                            *active_activation_count = base_activation_count;
+                            let branch_height = inner(
+                                std::slice::from_ref(item),
+                                config,
+                                depth,
+                                else_pending,
+                                serial_pending,
+                                active_activation_count,
+                                parallel_depth,
+                            );
+                            if branch_height > max_branch_height {
+                                max_branch_height = branch_height;
+                            }
+                        }
+                        *active_activation_count = base_activation_count;
+                        if *parallel_depth > 0 {
+                            *parallel_depth -= 1;
+                        }
+                        let gap = if parallel_needs_gap(items) {
+                            PARALLEL_BLOCK_GAP
+                        } else {
+                            0.0
+                        };
+                        height += max_branch_height + gap;
+                        continue;
+                    }
+
+                    if matches!(kind, BlockKind::Serial) {
+                        serial_pending.push(true);
+                        height += inner(items, config, depth, else_pending, serial_pending, active_activation_count, parallel_depth);
+                        if let Some(else_items) = else_items {
+                            height += inner(else_items, config, depth, else_pending, serial_pending, active_activation_count, parallel_depth);
+                        }
+                        serial_pending.pop();
+                    } else if !block_has_frame(kind) {
+                        height += inner(items, config, depth, else_pending, serial_pending, active_activation_count, parallel_depth);
+                        if let Some(else_items) = else_items {
+                            height += inner(else_items, config, depth, else_pending, serial_pending, active_activation_count, parallel_depth);
+                        }
+                    } else {
+                        height += block_header_space(config, depth);
+                        height += inner(items, config, depth + 1, else_pending, serial_pending, active_activation_count, parallel_depth);
+                        if let Some(else_items) = else_items {
+                            else_pending.push(true);
+                            height += block_else_spacing(config, depth);
+                            height += inner(else_items, config, depth + 1, else_pending, serial_pending, active_activation_count, parallel_depth);
+                            else_pending.pop();
+                        }
+                        height += block_footer_padding(config, depth) + config.row_height * 0.5 - config.row_height;
+                    }
+                }
+                Item::Activate { .. } => {
+                    *active_activation_count += 1;
+                }
+                Item::Deactivate { .. } => {
+                    if *active_activation_count > 0 {
+                        *active_activation_count -= 1;
+                    }
+                }
+                Item::Destroy { .. } => {
+                    height += DESTROY_SPACING;
+                }
+                Item::ParticipantDecl { .. } => {}
+                Item::Autonumber { .. } => {}
+                Item::DiagramOption { .. } => {} // Options don't take space
             }
-            Item::Activate { .. } | Item::Deactivate { .. } | Item::Destroy { .. } => {}
-            Item::ParticipantDecl { .. } => {}
-            Item::Autonumber { .. } => {}
-            Item::DiagramOption { .. } => {} // Options don't take space
         }
+        height
     }
-    height
+
+    let mut else_pending = Vec::new();
+    let mut serial_pending = Vec::new();
+    let mut active_activation_count = 0;
+    let mut parallel_depth = 0;
+    inner(
+        items,
+        config,
+        depth,
+        &mut else_pending,
+        &mut serial_pending,
+        &mut active_activation_count,
+        &mut parallel_depth,
+    )
 }
 
 fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
@@ -1202,7 +1678,7 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
     }
 }
 
-fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item]) {
+fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item], depth: usize) {
     for item in items {
         match item {
             Item::Message {
@@ -1212,9 +1688,21 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item]) {
                 arrow,
                 activate,
                 deactivate,
+                create,
                 ..
             } => {
-                render_message(svg, state, from, to, text, arrow, *activate, *deactivate);
+                render_message(
+                    svg,
+                    state,
+                    from,
+                    to,
+                    text,
+                    arrow,
+                    *activate,
+                    *deactivate,
+                    *create,
+                    depth,
+                );
             }
             Item::Note {
                 position,
@@ -1229,7 +1717,7 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item]) {
                 items,
                 else_items,
             } => {
-                render_block(svg, state, kind, label, items, else_items.as_deref());
+                render_block(svg, state, kind, label, items, else_items.as_deref(), depth);
             }
             Item::Activate { participant } => {
                 let y = state.current_y;
@@ -1275,6 +1763,7 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item]) {
                     stroke = theme.message_color
                 )
                 .unwrap();
+                state.current_y += DESTROY_SPACING;
             }
             Item::Autonumber { enabled, start } => {
                 if *enabled {
@@ -1311,9 +1800,19 @@ fn render_message(
     arrow: &Arrow,
     activate: bool,
     deactivate: bool,
+    create: bool,
+    depth: usize,
 ) {
     let x1 = state.get_x(from);
     let x2 = state.get_x(to);
+
+    state.apply_else_return_gap(arrow);
+    let active_count = state.active_activation_count();
+    let chain_gap = if activate && depth == 0 && active_count == 1 {
+        ACTIVATION_CHAIN_GAP
+    } else {
+        0.0
+    };
 
     let is_self = from == to;
     let line_class = match arrow.line {
@@ -1335,8 +1834,9 @@ fn render_message(
     let display_text = format!("{}{}", num_prefix, text);
     let lines: Vec<&str> = display_text.split("\\n").collect();
     let line_height = state.config.font_size + 4.0;
-    let extra_height = if lines.len() > 1 {
-        (lines.len() - 1) as f64 * line_height
+    let extra_height = if !is_self && lines.len() > 1 {
+        let spacing_line_height = message_spacing_line_height(&state.config);
+        (lines.len() - 1) as f64 * spacing_line_height
     } else {
         0.0
     };
@@ -1378,10 +1878,17 @@ fn render_message(
             .unwrap();
         }
 
-        state.current_y += state.config.row_height + extra_height;
+        let mut spacing = self_message_spacing(&state.config, lines.len());
+        if state.in_serial_block() {
+            spacing -= SERIAL_SELF_MESSAGE_ADJUST;
+        }
+        if active_count > 0 {
+            spacing -= SELF_MESSAGE_ACTIVE_ADJUST;
+        }
+        state.current_y += spacing;
     } else {
         // Regular message - check for delay
-        let delay_offset = arrow.delay.map(|d| d as f64 * 10.0).unwrap_or(0.0);
+        let delay_offset = arrow.delay.map(|d| d as f64 * DELAY_UNIT).unwrap_or(0.0);
         let y2 = y + delay_offset;
 
         let text_x = (x1 + x2) / 2.0;
@@ -1417,6 +1924,19 @@ fn render_message(
         state.current_y += state.config.row_height + delay_offset;
     }
 
+    if create {
+        state.current_y += CREATE_MESSAGE_SPACING;
+    }
+
+    state.apply_serial_first_row_gap();
+
+    if activate && depth == 0 {
+        state.current_y += ACTIVATION_START_GAP;
+    }
+    if chain_gap > 0.0 {
+        state.current_y += chain_gap;
+    }
+
     // Handle activation
     if activate {
         state
@@ -1444,13 +1964,14 @@ fn render_note(
     text: &str,
 ) {
     let lines: Vec<&str> = text.split("\\n").collect();
-    let line_height = state.config.font_size + 4.0;
-    let note_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
+    let line_height = note_line_height(&state.config);
+    let padding = note_padding(&state.config);
+    let note_height = padding * 2.0 + lines.len() as f64 * line_height;
 
     // Calculate note width based on content or participant span
     // Use 12.0 per char for CJK text estimation (wider than ASCII)
     let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(10);
-    let content_width = (max_line_len as f64 * 10.0 + state.config.note_padding * 2.0).max(80.0);
+    let content_width = (max_line_len as f64 * 10.0 + padding * 2.0).max(80.0);
 
     let (x, note_width, text_anchor) = match position {
         NotePosition::Left => {
@@ -1536,12 +2057,12 @@ fn render_note(
     // Note text
     let text_x = match text_anchor {
         "middle" => x + note_width / 2.0,
-        "start" => x + state.config.note_padding,
-        _ => x + note_width - state.config.note_padding,
+        "start" => x + padding,
+        _ => x + note_width - padding,
     };
 
     for (i, line) in lines.iter().enumerate() {
-        let text_y = y + state.config.note_padding + (i as f64 + 0.8) * line_height;
+        let text_y = y + padding + (i as f64 + 0.8) * line_height;
         writeln!(
             svg,
             r#"<text x="{x}" y="{y}" class="note-text" text-anchor="{anchor}">{t}</text>"#,
@@ -1554,7 +2075,7 @@ fn render_note(
     }
 
     // Add note height plus margin
-    state.current_y += note_height.max(state.config.row_height) + 15.0;
+    state.current_y += note_height.max(state.config.row_height) + NOTE_MARGIN;
 }
 
 /// Render a state box (rounded rectangle)
@@ -1566,7 +2087,7 @@ fn render_state(
 ) {
     let theme = &state.config.theme;
     let lines: Vec<&str> = text.split("\\n").collect();
-    let line_height = state.config.font_size + 4.0;
+    let line_height = state_line_height(&state.config);
     let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
 
     // Calculate box position and width
@@ -1583,7 +2104,8 @@ fn render_state(
         (center - span_width / 2.0, span_width)
     };
 
-    let y = state.current_y;
+    let shift = item_pre_shift(&state.config);
+    let y = (state.current_y - shift).max(state.content_start());
 
     // Draw rounded rectangle
     writeln!(
@@ -1615,7 +2137,7 @@ fn render_state(
         .unwrap();
     }
 
-    state.current_y += box_height.max(state.config.row_height) + 10.0;
+    state.current_y = y + box_height + state.config.row_height + REF_EXTRA_GAP;
 }
 
 /// Render a ref box (hexagon-like shape)
@@ -1631,7 +2153,7 @@ fn render_ref(
 ) {
     let theme = &state.config.theme;
     let lines: Vec<&str> = text.split("\\n").collect();
-    let line_height = state.config.font_size + 4.0;
+    let line_height = ref_line_height(&state.config);
     let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
     let notch_size = 10.0;
 
@@ -1649,13 +2171,16 @@ fn render_ref(
         (center - span_width / 2.0, span_width)
     };
 
-    let y = state.current_y;
+    let shift = item_pre_shift(&state.config);
+    let y = (state.current_y - shift).max(state.content_start());
+    let input_offset = state.config.note_padding + state.config.font_size + 1.0;
+    let output_padding = state.config.note_padding + 3.0;
 
     // Draw input signal arrow if present
     if let Some(from) = input_from {
         let from_x = state.get_x(from);
         let to_x = x; // Left edge of ref box
-        let arrow_y = y + box_height / 2.0;
+        let arrow_y = y + input_offset;
 
         // Draw arrow line
         writeln!(
@@ -1735,7 +2260,7 @@ fn render_ref(
     if let Some(to) = output_to {
         let from_x = x + box_width; // Right edge of ref box
         let to_x = state.get_x(to);
-        let arrow_y = y + box_height;
+        let arrow_y = y + box_height - output_padding;
 
         // Draw dashed arrow line (response style)
         writeln!(
@@ -1761,7 +2286,7 @@ fn render_ref(
         }
     }
 
-    state.current_y += box_height.max(state.config.row_height) + 15.0;
+    state.current_y = y + box_height + state.config.row_height + STATE_EXTRA_GAP;
 }
 
 /// Render a description (extended text explanation)
@@ -1799,28 +2324,69 @@ fn render_description(
 fn render_block(
     svg: &mut String,
     state: &mut RenderState,
-    _kind: &BlockKind,
+    kind: &BlockKind,
     _label: &str,
     items: &[Item],
     else_items: Option<&[Item]>,
+    depth: usize,
 ) {
+    if block_is_parallel(kind) {
+        state.push_parallel();
+        let start_y = state.current_y;
+        let mut max_end_y = start_y;
+        for item in items {
+            state.current_y = start_y;
+            render_items(svg, state, std::slice::from_ref(item), depth);
+            if state.current_y > max_end_y {
+                max_end_y = state.current_y;
+            }
+        }
+        let gap = if parallel_needs_gap(items) {
+            PARALLEL_BLOCK_GAP
+        } else {
+            0.0
+        };
+        state.current_y = max_end_y + gap;
+        state.pop_parallel();
+        return;
+    }
+
+    if matches!(kind, BlockKind::Serial) {
+        state.push_serial_first_row_pending();
+        render_items(svg, state, items, depth);
+        if let Some(else_items) = else_items {
+            render_items(svg, state, else_items, depth);
+        }
+        state.pop_serial_first_row_pending();
+        return;
+    }
+
+    if !block_has_frame(kind) {
+        render_items(svg, state, items, depth);
+        if let Some(else_items) = else_items {
+            render_items(svg, state, else_items, depth);
+        }
+        return;
+    }
+
     // Note: Block frame, labels, and else separators are rendered by render_block_labels()
     // This function only handles Y position tracking and rendering of inner items
     // svg is still used for rendering inner items via render_items()
 
-    // Block header space (must be larger than pentagon label height of 20px + margin)
-    state.current_y += state.config.row_height * 1.0;
+    state.current_y += block_header_space(&state.config, depth);
 
     // Render items
-    render_items(svg, state, items);
+    render_items(svg, state, items, depth + 1);
 
     // Render else items if present
     if let Some(else_items) = else_items {
-        state.current_y += state.config.row_height * 0.5;
-        render_items(svg, state, else_items);
+        state.push_else_return_pending();
+        state.current_y += block_else_spacing(&state.config, depth);
+        render_items(svg, state, else_items, depth + 1);
+        state.pop_else_return_pending();
     }
 
-    let end_y = state.current_y + state.config.row_height * 0.3;
+    let end_y = state.current_y - state.config.row_height + block_footer_padding(&state.config, depth);
 
     // Set current_y to end of block + margin
     state.current_y = end_y + state.config.row_height * 0.5;

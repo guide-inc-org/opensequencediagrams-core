@@ -132,11 +132,11 @@ pub fn parse(input: &str) -> Result<Diagram, ParseError> {
                     if brace_depth == 0 {
                         break;
                     }
-                } else if block_line.ends_with('{') {
-                    brace_depth += 1;
+                    i += 1;
+                    continue;
                 }
 
-                if brace_depth > 0 && !block_line.is_empty() && !block_line.starts_with('#') {
+                if !block_line.is_empty() && !block_line.starts_with('#') {
                     // Recursively parse nested content
                     if let Some((nested_kind, _)) = parse_brace_block_start(block_line) {
                         // Handle nested parallel/serial blocks
@@ -273,9 +273,12 @@ fn parse_multiline_ref_start(input: &str) -> Option<RefStartResult> {
     let mut rest_str = input.to_string();
 
     // Check for "A->ref over" pattern (input signal)
-    if let Some(arrow_pos) = input.find("->ref") {
-        input_from = Some(input[..arrow_pos].trim().to_string());
-        rest_str = input[arrow_pos + 2..].to_string(); // Skip "->" keep "ref..."
+    if let Some(arrow_pos) = input.to_lowercase().find("->") {
+        let after_arrow = input[arrow_pos + 2..].trim_start();
+        if after_arrow.to_lowercase().starts_with("ref over") {
+            input_from = Some(input[..arrow_pos].trim().to_string());
+            rest_str = after_arrow.to_string(); // Keep "ref over ..."
+        }
     }
 
     let rest_lower = rest_str.to_lowercase();
@@ -956,6 +959,34 @@ end note"#;
             Item::Ref { participants, text, .. } => {
                 assert_eq!(participants, &["Alice", "Bob"]);
                 assert_eq!(text, "See other diagram");
+            }
+            _ => panic!("Expected Ref"),
+        }
+    }
+
+    #[test]
+    fn test_ref_input_signal_multiline() {
+        let input = r#"Alice->ref over Bob, Carol: Input signal
+line 1
+line 2
+end ref-->Alice: Output signal"#;
+        let result = parse(input).unwrap();
+        assert_eq!(result.items.len(), 1);
+        match &result.items[0] {
+            Item::Ref {
+                participants,
+                text,
+                input_from,
+                input_label,
+                output_to,
+                output_label,
+            } => {
+                assert_eq!(participants, &["Bob", "Carol"]);
+                assert_eq!(text, "line 1\\nline 2");
+                assert_eq!(input_from.as_deref(), Some("Alice"));
+                assert_eq!(input_label.as_deref(), Some("Input signal"));
+                assert_eq!(output_to.as_deref(), Some("Alice"));
+                assert_eq!(output_label.as_deref(), Some("Output signal"));
             }
             _ => panic!("Expected Ref"),
         }
