@@ -28,7 +28,7 @@ pub fn render(input: &str) -> Result<String, String> {
 /// The rendered SVG as a string, or an error message
 #[wasm_bindgen]
 pub fn render_with_theme(input: &str, theme_name: &str) -> Result<String, String> {
-    let theme = Theme::by_name(theme_name).unwrap_or_else(Theme::default);
+    let theme = Theme::by_name(theme_name).unwrap_or_default();
     let config = Config::default().with_theme(theme);
 
     match osd_core::parse(input) {

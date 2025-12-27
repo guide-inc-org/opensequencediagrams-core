@@ -2404,9 +2404,8 @@ fn render_note(
 
     writeln!(
         svg,
-        r##"<path d="{path}" fill="{fill}" stroke="{stroke}" stroke-width="1"/>"##,
+        r##"<path d="{path}" fill="#e0e0a0" stroke="{stroke}" stroke-width="1"/>"##,
         path = fold_path,
-        fill = "#e0e0a0", // Slightly darker yellow for fold
         stroke = theme.note_stroke
     )
     .unwrap();

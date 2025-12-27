@@ -1,5 +1,15 @@
 //! osd-core: OpenSequenceDiagrams core library - A sequence diagram parser and SVG renderer
 //!
+// Suppress some clippy warnings that are stylistic or too strict
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::option_map_unit_fn)]
+#![allow(clippy::manual_inspect)]
+//!
 //! # Example
 //!
 //! ```
