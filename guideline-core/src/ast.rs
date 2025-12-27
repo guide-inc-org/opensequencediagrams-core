@@ -1,5 +1,12 @@
 //! AST definitions for sequence diagrams
 
+/// Diagram options (parsed from option directives)
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DiagramOptions {
+    /// Footer style
+    pub footer: FooterStyle,
+}
+
 /// A complete sequence diagram
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagram {
@@ -7,6 +14,8 @@ pub struct Diagram {
     pub title: Option<String>,
     /// Diagram items (messages, notes, blocks, etc.)
     pub items: Vec<Item>,
+    /// Diagram options
+    pub options: DiagramOptions,
 }
 
 impl Diagram {
@@ -142,6 +151,33 @@ pub enum Item {
         enabled: bool,
         start: Option<u32>,
     },
+    /// State box (rounded rectangle)
+    State {
+        participants: Vec<String>,
+        text: String,
+    },
+    /// Reference box
+    Ref {
+        participants: Vec<String>,
+        text: String,
+        /// Input signal sender (for A->ref over B: label syntax)
+        input_from: Option<String>,
+        /// Input signal label
+        input_label: Option<String>,
+        /// Output signal receiver (for end ref-->A: label syntax)
+        output_to: Option<String>,
+        /// Output signal label
+        output_label: Option<String>,
+    },
+    /// Diagram option
+    DiagramOption {
+        key: String,
+        value: String,
+    },
+    /// Extended text description (indented comment)
+    Description {
+        text: String,
+    },
 }
 
 /// Arrow style
@@ -210,6 +246,18 @@ pub enum NotePosition {
     Over,
 }
 
+/// Footer style for diagram (controlled by option footer=xxx)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FooterStyle {
+    /// No footer at all
+    None,
+    /// Simple horizontal line
+    Bar,
+    /// Participant boxes at bottom (default)
+    #[default]
+    Box,
+}
+
 /// Block kind
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
@@ -223,6 +271,10 @@ pub enum BlockKind {
     Par,
     /// Sequential (inside par)
     Seq,
+    /// Parallel with braces syntax
+    Parallel,
+    /// Serial with braces syntax
+    Serial,
 }
 
 impl BlockKind {
@@ -233,6 +285,8 @@ impl BlockKind {
             BlockKind::Loop => "loop",
             BlockKind::Par => "par",
             BlockKind::Seq => "seq",
+            BlockKind::Parallel => "parallel",
+            BlockKind::Serial => "serial",
         }
     }
 }

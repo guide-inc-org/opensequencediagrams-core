@@ -67,11 +67,24 @@ struct BlockBackground {
     height: f64,
 }
 
+/// Block label info for deferred rendering (rendered above lifelines)
+#[derive(Debug, Clone)]
+struct BlockLabel {
+    x1: f64,
+    start_y: f64,
+    end_y: f64,
+    x2: f64,
+    kind: String,
+    label: String,
+    else_y: Option<f64>,
+}
+
 /// Render state
 struct RenderState {
     config: Config,
     participants: Vec<Participant>,
     participant_x: HashMap<String, f64>,
+    participant_widths: HashMap<String, f64>,
     current_y: f64,
     activations: HashMap<String, Vec<(f64, Option<f64>)>>,
     autonumber: Option<u32>,
@@ -80,6 +93,27 @@ struct RenderState {
     total_width: f64,
     /// Collected block backgrounds for deferred rendering
     block_backgrounds: Vec<BlockBackground>,
+    /// Collected block labels for deferred rendering (above lifelines)
+    block_labels: Vec<BlockLabel>,
+    /// Footer style from diagram options
+    footer_style: FooterStyle,
+}
+
+/// Estimate text width in pixels (rough approximation)
+fn estimate_text_width(text: &str, font_size: f64) -> f64 {
+    // Handle multiline text - take the longest line
+    let max_line_len = text.split("\\n").map(|line| {
+        // Count characters, accounting for different widths
+        line.chars().map(|c| {
+            if c.is_ascii() {
+                if c.is_uppercase() { 0.7 } else { 0.5 }
+            } else {
+                1.0 // CJK and other characters are wider
+            }
+        }).sum::<f64>()
+    }).fold(0.0_f64, |a, b| a.max(b));
+
+    max_line_len * font_size * 1.0 + 16.0 // Add padding
 }
 
 /// Calculate dynamic gaps between participants based on message text lengths
@@ -173,30 +207,53 @@ fn calculate_participant_gaps(
 }
 
 impl RenderState {
-    fn new(config: Config, participants: Vec<Participant>, items: &[Item], has_title: bool) -> Self {
+    fn new(config: Config, participants: Vec<Participant>, items: &[Item], has_title: bool, footer_style: FooterStyle) -> Self {
+        // Calculate individual participant widths based on their names
+        let mut participant_widths: HashMap<String, f64> = HashMap::new();
+        let min_width = config.participant_width;
+
+        for p in &participants {
+            let text_width = estimate_text_width(&p.name, config.font_size);
+            let width = text_width.max(min_width);
+            participant_widths.insert(p.id().to_string(), width);
+        }
+
         let gaps = calculate_participant_gaps(&participants, items, &config);
 
         // Left margin for notes/actions on leftmost participant
-        let left_margin = 80.0;
+        let left_margin = 100.0;
         // Right margin for self-loops and notes on rightmost participant
-        let right_margin = 120.0;
+        let right_margin = 140.0;
 
         let mut participant_x = HashMap::new();
-        let mut current_x = config.padding + left_margin + config.participant_width / 2.0;
+        let first_width = participants.first()
+            .map(|p| *participant_widths.get(p.id()).unwrap_or(&min_width))
+            .unwrap_or(min_width);
+        let mut current_x = config.padding + left_margin + first_width / 2.0;
 
         for (i, p) in participants.iter().enumerate() {
             participant_x.insert(p.id().to_string(), current_x);
             if i < gaps.len() {
-                current_x += gaps[i];
+                let current_width = *participant_widths.get(p.id()).unwrap_or(&min_width);
+                let next_width = participants.get(i + 1)
+                    .map(|np| *participant_widths.get(np.id()).unwrap_or(&min_width))
+                    .unwrap_or(min_width);
+                // Gap is between the edges of adjacent participants
+                let actual_gap = gaps[i].max((current_width + next_width) / 2.0 + 30.0);
+                current_x += actual_gap;
             }
         }
 
-        let total_width = current_x + config.participant_width / 2.0 + right_margin + config.padding;
+        let last_width = participants.last()
+            .map(|p| *participant_widths.get(p.id()).unwrap_or(&min_width))
+            .unwrap_or(min_width);
+        let total_width = current_x + last_width / 2.0 + right_margin + config.padding;
 
         Self {
             config,
             participants,
             participant_x,
+            participant_widths,
             current_y: 0.0,
             activations: HashMap::new(),
             autonumber: None,
@@ -204,7 +261,13 @@ impl RenderState {
             has_title,
             total_width,
             block_backgrounds: Vec::new(),
+            block_labels: Vec::new(),
+            footer_style,
         }
+    }
+
+    fn get_participant_width(&self, name: &str) -> f64 {
+        *self.participant_widths.get(name).unwrap_or(&self.config.participant_width)
     }
 
     fn get_x(&self, name: &str) -> f64 {
@@ -233,12 +296,18 @@ impl RenderState {
 
     /// Get block left boundary (based on leftmost participant)
     fn block_left(&self) -> f64 {
-        self.leftmost_x() - self.config.participant_width / 2.0 - self.config.block_margin
+        let leftmost_width = self.participants.first()
+            .map(|p| self.get_participant_width(p.id()))
+            .unwrap_or(self.config.participant_width);
+        self.leftmost_x() - leftmost_width / 2.0 - self.config.block_margin
     }
 
     /// Get block right boundary (based on rightmost participant)
     fn block_right(&self) -> f64 {
-        self.rightmost_x() + self.config.participant_width / 2.0 + self.config.block_margin
+        let rightmost_width = self.participants.last()
+            .map(|p| self.get_participant_width(p.id()))
+            .unwrap_or(self.config.participant_width);
+        self.rightmost_x() + rightmost_width / 2.0 + self.config.block_margin
     }
 
     fn header_top(&self) -> f64 {
@@ -263,6 +332,19 @@ impl RenderState {
     /// Add a block background to be rendered later
     fn add_block_background(&mut self, x: f64, y: f64, width: f64, height: f64) {
         self.block_backgrounds.push(BlockBackground { x, y, width, height });
+    }
+
+    /// Add a block label to be rendered later (above lifelines)
+    fn add_block_label(&mut self, x1: f64, start_y: f64, end_y: f64, x2: f64, kind: &str, label: &str, else_y: Option<f64>) {
+        self.block_labels.push(BlockLabel {
+            x1,
+            start_y,
+            end_y,
+            x2,
+            kind: kind.to_string(),
+            label: label.to_string(),
+            else_y,
+        });
     }
 }
 
@@ -362,7 +444,7 @@ fn calculate_block_bounds_with_label(
 fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
     for item in items {
         match item {
-            Item::Message { text, from, to, .. } => {
+            Item::Message { text, from, to, arrow, .. } => {
                 let is_self = from == to;
                 let lines: Vec<&str> = text.split("\\n").collect();
                 let line_height = state.config.font_size + 4.0;
@@ -371,6 +453,7 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
                 } else {
                     0.0
                 };
+                let delay_offset = arrow.delay.map(|d| d as f64 * 10.0).unwrap_or(0.0);
 
                 if is_self {
                     state.current_y += state.config.row_height + extra_height;
@@ -378,7 +461,7 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
                     if lines.len() > 1 {
                         state.current_y += extra_height;
                     }
-                    state.current_y += state.config.row_height;
+                    state.current_y += state.config.row_height + delay_offset;
                 }
             }
             Item::Note { text, .. } => {
@@ -387,14 +470,37 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
                 let note_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
                 state.current_y += note_height.max(state.config.row_height) + 15.0;
             }
+            Item::State { text, .. } => {
+                let lines: Vec<&str> = text.split("\\n").collect();
+                let line_height = state.config.font_size + 4.0;
+                let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
+                state.current_y += box_height.max(state.config.row_height) + 10.0;
+            }
+            Item::Ref { text, .. } => {
+                let lines: Vec<&str> = text.split("\\n").collect();
+                let line_height = state.config.font_size + 4.0;
+                let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
+                state.current_y += box_height.max(state.config.row_height) + 15.0;
+            }
+            Item::Description { text } => {
+                let lines: Vec<&str> = text.split("\\n").collect();
+                let line_height = state.config.font_size + 4.0;
+                state.current_y += lines.len() as f64 * line_height + 10.0;
+            }
             Item::Block { kind, label, items, else_items } => {
                 let start_y = state.current_y;
 
                 // Calculate bounds based on involved participants and label width
                 let (x1, x2) = calculate_block_bounds_with_label(items, else_items.as_deref(), label, kind.as_str(), state);
 
-                state.current_y += state.config.row_height * 0.5;
+                state.current_y += state.config.row_height * 1.0; // Match render_block header space
                 collect_block_backgrounds(state, items);
+
+                let else_y = if else_items.is_some() {
+                    Some(state.current_y)
+                } else {
+                    None
+                };
 
                 if let Some(else_items) = else_items {
                     state.current_y += state.config.row_height * 0.5;
@@ -406,6 +512,8 @@ fn collect_block_backgrounds(state: &mut RenderState, items: &[Item]) {
 
                 // Collect this block's background
                 state.add_block_background(x1, start_y, x2 - x1, end_y - start_y);
+                // Collect this block's label for rendering above lifelines
+                state.add_block_label(x1, start_y, end_y, x2, kind.as_str(), label, else_y);
             }
             _ => {}
         }
@@ -429,6 +537,98 @@ fn render_block_backgrounds(svg: &mut String, state: &RenderState) {
     }
 }
 
+/// Render all collected block labels (frame, pentagon, condition text, else divider)
+/// This is called AFTER lifelines are drawn so labels appear on top
+fn render_block_labels(svg: &mut String, state: &RenderState) {
+    let theme = &state.config.theme;
+
+    for bl in &state.block_labels {
+        let x1 = bl.x1;
+        let x2 = bl.x2;
+        let start_y = bl.start_y;
+        let end_y = bl.end_y;
+
+        // Draw block frame
+        writeln!(
+            svg,
+            r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" class="block"/>"#,
+            x = x1,
+            y = start_y,
+            w = x2 - x1,
+            h = end_y - start_y
+        )
+        .unwrap();
+
+        // Pentagon/tab-shaped label (WSD style)
+        let label_text = &bl.kind;
+        let label_width = (label_text.len() as f64 * 8.0 + 12.0).max(35.0);
+        let label_height = 20.0;
+        let notch_size = 8.0;
+
+        // Pentagon path
+        let pentagon_path = format!(
+            "M {x1} {y1} L {x2} {y1} L {x2} {y2} L {x3} {y3} L {x1} {y3} Z",
+            x1 = x1,
+            y1 = start_y,
+            x2 = x1 + label_width,
+            y2 = start_y + label_height - notch_size,
+            x3 = x1 + label_width - notch_size,
+            y3 = start_y + label_height
+        );
+
+        writeln!(
+            svg,
+            r##"<path d="{path}" fill="{fill}" stroke="{stroke}"/>"##,
+            path = pentagon_path,
+            fill = theme.block_label_fill,
+            stroke = theme.block_stroke
+        )
+        .unwrap();
+
+        // Block type label text
+        writeln!(
+            svg,
+            r#"<text x="{x}" y="{y}" class="block-label">{kind}</text>"#,
+            x = x1 + 5.0,
+            y = start_y + 14.0,
+            kind = label_text
+        )
+        .unwrap();
+
+        // Condition label (outside the pentagon)
+        if !bl.label.is_empty() {
+            writeln!(
+                svg,
+                r#"<text x="{x}" y="{y}" class="block-label">[{label}]</text>"#,
+                x = x1 + label_width + 8.0,
+                y = start_y + 14.0,
+                label = escape_xml(&bl.label)
+            )
+            .unwrap();
+        }
+
+        // Else separator
+        if let Some(else_y) = bl.else_y {
+            writeln!(
+                svg,
+                r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{c}" stroke-dasharray="5,3"/>"##,
+                x1 = x1,
+                y = else_y,
+                x2 = x2,
+                c = theme.block_stroke
+            )
+            .unwrap();
+            writeln!(
+                svg,
+                r#"<text x="{x}" y="{y}" class="block-label">[else]</text>"#,
+                x = x1 + 4.0,
+                y = else_y - 4.0
+            )
+            .unwrap();
+        }
+    }
+}
+
 /// Render a diagram to SVG
 pub fn render(diagram: &Diagram) -> String {
     render_with_config(diagram, Config::default())
@@ -438,7 +638,8 @@ pub fn render(diagram: &Diagram) -> String {
 pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
     let participants = diagram.participants();
     let has_title = diagram.title.is_some();
-    let mut state = RenderState::new(config, participants, &diagram.items, has_title);
+    let footer_style = diagram.options.footer;
+    let mut state = RenderState::new(config, participants, &diagram.items, has_title, footer_style);
     let mut svg = String::new();
 
     // Pre-calculate height
@@ -649,6 +850,9 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
         .unwrap();
     }
 
+    // Draw block labels AFTER lifelines so they appear on top
+    render_block_labels(&mut svg, &state);
+
     // Draw participant headers
     render_participant_headers(&mut svg, &state, header_y);
 
@@ -659,8 +863,29 @@ pub fn render_with_config(diagram: &Diagram, config: Config) -> String {
     // Draw activation bars
     render_activations(&mut svg, &mut state, footer_y);
 
-    // Draw participant footers
-    render_participant_headers(&mut svg, &state, footer_y);
+    // Draw participant footers based on footer style option
+    match state.footer_style {
+        FooterStyle::Box => {
+            render_participant_headers(&mut svg, &state, footer_y);
+        }
+        FooterStyle::Bar => {
+            // Draw simple horizontal line across all participants
+            let left = state.leftmost_x() - state.get_participant_width(state.participants.first().map(|p| p.id()).unwrap_or("")) / 2.0;
+            let right = state.rightmost_x() + state.get_participant_width(state.participants.last().map(|p| p.id()).unwrap_or("")) / 2.0;
+            writeln!(
+                &mut svg,
+                r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{c}" stroke-width="1"/>"##,
+                x1 = left,
+                y = footer_y,
+                x2 = right,
+                c = state.config.theme.lifeline_color
+            )
+            .unwrap();
+        }
+        FooterStyle::None => {
+            // No footer at all
+        }
+    }
 
     svg.push_str("</svg>\n");
     svg
@@ -671,16 +896,29 @@ fn calculate_height(items: &[Item], config: &Config) -> f64 {
     let line_height = config.font_size + 4.0;
     for item in items {
         match item {
-            Item::Message { text, .. } => {
+            Item::Message { text, arrow, .. } => {
                 let lines = text.split("\\n").count();
-                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height;
+                let delay_offset = arrow.delay.map(|d| d as f64 * 10.0).unwrap_or(0.0);
+                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + delay_offset;
             }
             Item::Note { text, .. } => {
                 let lines = text.split("\\n").count();
                 height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + 15.0;
             }
+            Item::State { text, .. } => {
+                let lines = text.split("\\n").count();
+                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + 10.0;
+            }
+            Item::Ref { text, .. } => {
+                let lines = text.split("\\n").count();
+                height += config.row_height + (lines.saturating_sub(1)) as f64 * line_height + 15.0;
+            }
+            Item::Description { text } => {
+                let lines = text.split("\\n").count();
+                height += lines as f64 * line_height + 10.0;
+            }
             Item::Block { items, else_items, .. } => {
-                height += config.row_height * 0.5; // Block header margin
+                height += config.row_height * 1.0; // Block header margin (space for pentagon label + gap)
                 height += calculate_height(items, config);
                 if let Some(else_items) = else_items {
                     height += config.row_height * 0.5; // Else separator
@@ -691,6 +929,7 @@ fn calculate_height(items: &[Item], config: &Config) -> f64 {
             Item::Activate { .. } | Item::Deactivate { .. } | Item::Destroy { .. } => {}
             Item::ParticipantDecl { .. } => {}
             Item::Autonumber { .. } => {}
+            Item::DiagramOption { .. } => {} // Options don't take space
         }
     }
     height
@@ -701,7 +940,8 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
 
     for p in &state.participants {
         let x = state.get_x(p.id());
-        let box_x = x - state.config.participant_width / 2.0;
+        let p_width = state.get_participant_width(p.id());
+        let box_x = x - p_width / 2.0;
 
         match p.kind {
             ParticipantKind::Participant => {
@@ -713,7 +953,7 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
                             r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" class="participant"/>"#,
                             x = box_x,
                             y = y,
-                            w = state.config.participant_width,
+                            w = p_width,
                             h = state.config.header_height
                         )
                         .unwrap();
@@ -724,14 +964,14 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
                             r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" ry="8" class="participant"/>"#,
                             x = box_x,
                             y = y,
-                            w = state.config.participant_width,
+                            w = p_width,
                             h = state.config.header_height
                         )
                         .unwrap();
                     }
                     ParticipantShape::Circle => {
                         // Draw ellipse/circle that fits in the header area
-                        let rx = state.config.participant_width / 2.0 - 5.0;
+                        let rx = p_width / 2.0 - 5.0;
                         let ry = state.config.header_height / 2.0 - 2.0;
                         writeln!(
                             svg,
@@ -744,15 +984,46 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
                         .unwrap();
                     }
                 }
-                // Name centered in box
-                writeln!(
-                    svg,
-                    r#"<text x="{x}" y="{y}" class="participant-text">{name}</text>"#,
-                    x = x,
-                    y = y + state.config.header_height / 2.0 + 5.0,
-                    name = escape_xml(&p.name)
-                )
-                .unwrap();
+                // Name centered in box (handle multiline with \n)
+                let lines: Vec<&str> = p.name.split("\\n").collect();
+                if lines.len() == 1 {
+                    writeln!(
+                        svg,
+                        r#"<text x="{x}" y="{y}" class="participant-text">{name}</text>"#,
+                        x = x,
+                        y = y + state.config.header_height / 2.0 + 5.0,
+                        name = escape_xml(&p.name)
+                    )
+                    .unwrap();
+                } else {
+                    let line_height = state.config.font_size + 2.0;
+                    let total_height = lines.len() as f64 * line_height;
+                    let start_y = y + state.config.header_height / 2.0 - total_height / 2.0 + line_height * 0.8;
+                    write!(svg, r#"<text x="{x}" class="participant-text">"#, x = x).unwrap();
+                    for (i, line) in lines.iter().enumerate() {
+                        let dy = if i == 0 { start_y } else { line_height };
+                        if i == 0 {
+                            writeln!(
+                                svg,
+                                r#"<tspan x="{x}" y="{y}">{text}</tspan>"#,
+                                x = x,
+                                y = dy,
+                                text = escape_xml(line)
+                            )
+                            .unwrap();
+                        } else {
+                            writeln!(
+                                svg,
+                                r#"<tspan x="{x}" dy="{dy}">{text}</tspan>"#,
+                                x = x,
+                                dy = dy,
+                                text = escape_xml(line)
+                            )
+                            .unwrap();
+                        }
+                    }
+                    writeln!(svg, "</text>").unwrap();
+                }
             }
             ParticipantKind::Actor => {
                 // Stick figure centered in header area
@@ -810,15 +1081,50 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
                     y2 = fig_center_y + body_len / 2.0 + leg_len
                 )
                 .unwrap();
-                // Name below figure
-                writeln!(
-                    svg,
-                    r#"<text x="{x}" y="{y}" class="participant-text">{name}</text>"#,
-                    x = x,
-                    y = y + state.config.header_height + 15.0,
-                    name = escape_xml(&p.name)
-                )
-                .unwrap();
+                // Name below figure (with multiline support)
+                let name_lines: Vec<&str> = p.name.split("\\n").collect();
+                if name_lines.len() == 1 {
+                    writeln!(
+                        svg,
+                        r#"<text x="{x}" y="{y}" class="participant-text">{name}</text>"#,
+                        x = x,
+                        y = y + state.config.header_height + 15.0,
+                        name = escape_xml(&p.name)
+                    )
+                    .unwrap();
+                } else {
+                    // Multiline actor name using tspan
+                    let line_height = 16.0;
+                    let start_y = y + state.config.header_height + 15.0;
+                    writeln!(
+                        svg,
+                        r#"<text x="{x}" class="participant-text">"#,
+                        x = x
+                    )
+                    .unwrap();
+                    for (i, line) in name_lines.iter().enumerate() {
+                        if i == 0 {
+                            writeln!(
+                                svg,
+                                r#"<tspan x="{x}" y="{y}">{text}</tspan>"#,
+                                x = x,
+                                y = start_y,
+                                text = escape_xml(line)
+                            )
+                            .unwrap();
+                        } else {
+                            writeln!(
+                                svg,
+                                r#"<tspan x="{x}" dy="{dy}">{text}</tspan>"#,
+                                x = x,
+                                dy = line_height,
+                                text = escape_xml(line)
+                            )
+                            .unwrap();
+                        }
+                    }
+                    writeln!(svg, "</text>").unwrap();
+                }
             }
         }
     }
@@ -872,6 +1178,31 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item]) {
             }
             Item::Destroy { participant } => {
                 state.destroyed.insert(participant.clone(), state.current_y);
+                // Draw X mark on the lifeline
+                let x = state.get_x(participant);
+                let y = state.current_y;
+                let size = 12.0;
+                let theme = &state.config.theme;
+                writeln!(
+                    svg,
+                    r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{stroke}" stroke-width="2"/>"#,
+                    x1 = x - size,
+                    y1 = y - size,
+                    x2 = x + size,
+                    y2 = y + size,
+                    stroke = theme.message_color
+                )
+                .unwrap();
+                writeln!(
+                    svg,
+                    r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{stroke}" stroke-width="2"/>"#,
+                    x1 = x + size,
+                    y1 = y - size,
+                    x2 = x - size,
+                    y2 = y + size,
+                    stroke = theme.message_color
+                )
+                .unwrap();
             }
             Item::Autonumber { enabled, start } => {
                 if *enabled {
@@ -882,6 +1213,18 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item]) {
             }
             Item::ParticipantDecl { .. } => {
                 // Already processed
+            }
+            Item::State { participants, text } => {
+                render_state(svg, state, participants, text);
+            }
+            Item::Ref { participants, text, input_from, input_label, output_to, output_label } => {
+                render_ref(svg, state, participants, text, input_from.as_deref(), input_label.as_deref(), output_to.as_deref(), output_label.as_deref());
+            }
+            Item::DiagramOption { .. } => {
+                // Options are processed at render start, not during item rendering
+            }
+            Item::Description { text } => {
+                render_description(svg, state, text);
             }
         }
     }
@@ -899,7 +1242,6 @@ fn render_message(
 ) {
     let x1 = state.get_x(from);
     let x2 = state.get_x(to);
-    let y = state.current_y;
 
     let is_self = from == to;
     let line_class = match arrow.line {
@@ -966,22 +1308,27 @@ fn render_message(
 
         state.current_y += state.config.row_height + extra_height;
     } else {
-        // Regular message
-        let text_x = (x1 + x2) / 2.0;
-        let text_y = y - 8.0;
+        // Regular message - check for delay
+        let delay_offset = arrow.delay.map(|d| d as f64 * 10.0).unwrap_or(0.0);
+        let y2 = y + delay_offset;
 
+        let text_x = (x1 + x2) / 2.0;
+        let text_y = (y + y2) / 2.0 - 8.0;
+
+        // Draw arrow line (slanted if delay)
         writeln!(
             svg,
-            r#"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" class="{cls}" marker-end="{marker}"/>"#,
+            r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" class="{cls}" marker-end="{marker}"/>"#,
             x1 = x1,
-            y = y,
+            y1 = y,
             x2 = x2,
+            y2 = y2,
             cls = line_class,
             marker = marker
         )
         .unwrap();
 
-        // Text with multiline support
+        // Text with multiline support (positioned at midpoint of slanted line)
         for (i, line) in lines.iter().enumerate() {
             let line_y = text_y - (lines.len() - 1 - i) as f64 * line_height;
             writeln!(
@@ -994,8 +1341,8 @@ fn render_message(
             .unwrap();
         }
 
-        // Only add row_height here since extra_height was added before
-        state.current_y += state.config.row_height;
+        // Add row_height plus delay offset
+        state.current_y += state.config.row_height + delay_offset;
     }
 
     // Handle activation
@@ -1036,25 +1383,33 @@ fn render_note(
     let (x, note_width, text_anchor) = match position {
         NotePosition::Left => {
             let px = state.get_x(&participants[0]);
+            let p_width = state.get_participant_width(&participants[0]);
             let w = content_width.min(300.0);
-            (px - state.config.participant_width / 2.0 - w - 10.0, w, "end")
+            // Clamp to not go off left edge
+            let x = (px - p_width / 2.0 - w - 10.0).max(state.config.padding);
+            (x, w, "start")
         }
         NotePosition::Right => {
             let px = state.get_x(&participants[0]);
+            let p_width = state.get_participant_width(&participants[0]);
             let w = content_width.min(300.0);
-            (px + state.config.participant_width / 2.0 + 10.0, w, "start")
+            (px + p_width / 2.0 + 10.0, w, "start")
         }
         NotePosition::Over => {
             if participants.len() == 1 {
                 let px = state.get_x(&participants[0]);
                 // Allow wider notes for single participant
                 let w = content_width;
-                (px - w / 2.0, w, "middle")
+                // Clamp to stay within diagram
+                let x = (px - w / 2.0).max(state.config.padding);
+                (x, w, "middle")
             } else {
                 // Span across multiple participants
                 let x1 = state.get_x(&participants[0]);
                 let x2 = state.get_x(participants.last().unwrap());
-                let span_width = (x2 - x1).abs() + state.config.participant_width * 0.8;
+                let p1_width = state.get_participant_width(&participants[0]);
+                let p2_width = state.get_participant_width(participants.last().unwrap());
+                let span_width = (x2 - x1).abs() + (p1_width + p2_width) / 2.0 * 0.8;
                 let w = span_width.max(content_width);
                 let center = (x1 + x2) / 2.0;
                 // Clamp x to stay within padding
@@ -1130,26 +1485,262 @@ fn render_note(
     state.current_y += note_height.max(state.config.row_height) + 15.0;
 }
 
+/// Render a state box (rounded rectangle)
+fn render_state(
+    svg: &mut String,
+    state: &mut RenderState,
+    participants: &[String],
+    text: &str,
+) {
+    let theme = &state.config.theme;
+    let lines: Vec<&str> = text.split("\\n").collect();
+    let line_height = state.config.font_size + 4.0;
+    let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
+
+    // Calculate box position and width
+    let (x, box_width) = if participants.len() == 1 {
+        let px = state.get_x(&participants[0]);
+        let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(8);
+        let w = (max_line_len as f64 * 8.0 + state.config.note_padding * 2.0).max(60.0);
+        (px - w / 2.0, w)
+    } else {
+        let x1 = state.get_x(&participants[0]);
+        let x2 = state.get_x(participants.last().unwrap());
+        let span_width = (x2 - x1).abs() + state.config.participant_width * 0.6;
+        let center = (x1 + x2) / 2.0;
+        (center - span_width / 2.0, span_width)
+    };
+
+    let y = state.current_y;
+
+    // Draw rounded rectangle
+    writeln!(
+        svg,
+        r##"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" ry="8" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>"##,
+        x = x,
+        y = y,
+        w = box_width,
+        h = box_height,
+        fill = theme.state_fill,
+        stroke = theme.state_stroke
+    )
+    .unwrap();
+
+    // Draw text
+    let text_x = x + box_width / 2.0;
+    for (i, line) in lines.iter().enumerate() {
+        let text_y = y + state.config.note_padding + (i as f64 + 0.8) * line_height;
+        writeln!(
+            svg,
+            r##"<text x="{x}" y="{y}" text-anchor="middle" fill="{fill}" font-family="{font}" font-size="{size}px">{t}</text>"##,
+            x = text_x,
+            y = text_y,
+            fill = theme.state_text_color,
+            font = theme.font_family,
+            size = state.config.font_size,
+            t = escape_xml(line)
+        )
+        .unwrap();
+    }
+
+    state.current_y += box_height.max(state.config.row_height) + 10.0;
+}
+
+/// Render a ref box (hexagon-like shape)
+fn render_ref(
+    svg: &mut String,
+    state: &mut RenderState,
+    participants: &[String],
+    text: &str,
+    input_from: Option<&str>,
+    input_label: Option<&str>,
+    output_to: Option<&str>,
+    output_label: Option<&str>,
+) {
+    let theme = &state.config.theme;
+    let lines: Vec<&str> = text.split("\\n").collect();
+    let line_height = state.config.font_size + 4.0;
+    let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
+    let notch_size = 10.0;
+
+    // Calculate box position and width
+    let (x, box_width) = if participants.len() == 1 {
+        let px = state.get_x(&participants[0]);
+        let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(15);
+        let w = (max_line_len as f64 * 8.0 + state.config.note_padding * 2.0 + notch_size * 2.0).max(100.0);
+        (px - w / 2.0, w)
+    } else {
+        let x1 = state.get_x(&participants[0]);
+        let x2 = state.get_x(participants.last().unwrap());
+        let span_width = (x2 - x1).abs() + state.config.participant_width * 0.8;
+        let center = (x1 + x2) / 2.0;
+        (center - span_width / 2.0, span_width)
+    };
+
+    let y = state.current_y;
+
+    // Draw input signal arrow if present
+    if let Some(from) = input_from {
+        let from_x = state.get_x(from);
+        let to_x = x; // Left edge of ref box
+        let arrow_y = y + box_height / 2.0;
+
+        // Draw arrow line
+        writeln!(
+            svg,
+            r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" class="message" marker-end="url(#arrow-filled)"/>"##,
+            x1 = from_x,
+            y = arrow_y,
+            x2 = to_x
+        )
+        .unwrap();
+
+        // Draw label if present
+        if let Some(label) = input_label {
+            let text_x = (from_x + to_x) / 2.0;
+            writeln!(
+                svg,
+                r##"<text x="{x}" y="{y}" class="message-text" text-anchor="middle">{t}</text>"##,
+                x = text_x,
+                y = arrow_y - 8.0,
+                t = escape_xml(label)
+            )
+            .unwrap();
+        }
+    }
+
+    // Draw hexagon-like shape (ref box in WSD style)
+    // Left side has a notch cut
+    let ref_path = format!(
+        "M {x1} {y1} L {x2} {y1} L {x2} {y2} L {x1} {y2} L {x3} {y3} Z",
+        x1 = x + notch_size,
+        y1 = y,
+        x2 = x + box_width,
+        y2 = y + box_height,
+        x3 = x,
+        y3 = y + box_height / 2.0
+    );
+
+    writeln!(
+        svg,
+        r##"<path d="{path}" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>"##,
+        path = ref_path,
+        fill = theme.ref_fill,
+        stroke = theme.ref_stroke
+    )
+    .unwrap();
+
+    // Add "ref" label in top-left
+    writeln!(
+        svg,
+        r##"<text x="{x}" y="{y}" fill="{fill}" font-family="{font}" font-size="{size}px" font-weight="bold">ref</text>"##,
+        x = x + notch_size + 4.0,
+        y = y + state.config.font_size,
+        fill = theme.ref_text_color,
+        font = theme.font_family,
+        size = state.config.font_size - 2.0
+    )
+    .unwrap();
+
+    // Draw text centered
+    let text_x = x + box_width / 2.0;
+    for (i, line) in lines.iter().enumerate() {
+        let text_y = y + state.config.note_padding + (i as f64 + 0.8) * line_height;
+        writeln!(
+            svg,
+            r##"<text x="{x}" y="{y}" text-anchor="middle" fill="{fill}" font-family="{font}" font-size="{size}px">{t}</text>"##,
+            x = text_x,
+            y = text_y,
+            fill = theme.ref_text_color,
+            font = theme.font_family,
+            size = state.config.font_size,
+            t = escape_xml(line)
+        )
+        .unwrap();
+    }
+
+    // Draw output signal arrow if present
+    if let Some(to) = output_to {
+        let from_x = x + box_width; // Right edge of ref box
+        let to_x = state.get_x(to);
+        let arrow_y = y + box_height;
+
+        // Draw dashed arrow line (response style)
+        writeln!(
+            svg,
+            r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" class="message-dashed" marker-end="url(#arrow-filled)"/>"##,
+            x1 = from_x,
+            y = arrow_y,
+            x2 = to_x
+        )
+        .unwrap();
+
+        // Draw label if present
+        if let Some(label) = output_label {
+            let text_x = (from_x + to_x) / 2.0;
+            writeln!(
+                svg,
+                r##"<text x="{x}" y="{y}" class="message-text" text-anchor="middle">{t}</text>"##,
+                x = text_x,
+                y = arrow_y - 8.0,
+                t = escape_xml(label)
+            )
+            .unwrap();
+        }
+    }
+
+    state.current_y += box_height.max(state.config.row_height) + 15.0;
+}
+
+/// Render a description (extended text explanation)
+fn render_description(
+    svg: &mut String,
+    state: &mut RenderState,
+    text: &str,
+) {
+    let theme = &state.config.theme;
+    let lines: Vec<&str> = text.split("\\n").collect();
+    let line_height = state.config.font_size + 4.0;
+
+    // Draw text on the left side of the diagram
+    let x = state.config.padding + 10.0;
+    let y = state.current_y;
+
+    for (i, line) in lines.iter().enumerate() {
+        let text_y = y + (i as f64 + 0.8) * line_height;
+        writeln!(
+            svg,
+            r##"<text x="{x}" y="{y}" fill="{fill}" font-family="{font}" font-size="{size}px" font-style="italic">{t}</text>"##,
+            x = x,
+            y = text_y,
+            fill = theme.description_text_color,
+            font = theme.font_family,
+            size = state.config.font_size - 1.0,
+            t = escape_xml(line)
+        )
+        .unwrap();
+    }
+
+    state.current_y += lines.len() as f64 * line_height + 10.0;
+}
+
 fn render_block(
     svg: &mut String,
     state: &mut RenderState,
-    kind: &BlockKind,
-    label: &str,
+    _kind: &BlockKind,
+    _label: &str,
     items: &[Item],
     else_items: Option<&[Item]>,
 ) {
-    let start_y = state.current_y;
+    // Note: Block frame, labels, and else separators are rendered by render_block_labels()
+    // This function only handles Y position tracking and rendering of inner items
+    // svg is still used for rendering inner items via render_items()
 
-    // Calculate block bounds based on involved participants and label width
-    let (x1, x2) = calculate_block_bounds_with_label(items, else_items, label, kind.as_str(), state);
-
-    // Block header space
-    state.current_y += state.config.row_height * 0.5;
+    // Block header space (must be larger than pentagon label height of 20px + margin)
+    state.current_y += state.config.row_height * 1.0;
 
     // Render items
     render_items(svg, state, items);
-
-    let else_y = state.current_y;
 
     // Render else items if present
     if let Some(else_items) = else_items {
@@ -1162,88 +1753,8 @@ fn render_block(
     // Set current_y to end of block + margin
     state.current_y = end_y + state.config.row_height * 0.5;
 
-    let theme = &state.config.theme;
-
-    // Block background is rendered earlier (before lifelines) in render_block_backgrounds()
-
-    // Draw block frame
-    writeln!(
-        svg,
-        r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" class="block"/>"#,
-        x = x1,
-        y = start_y,
-        w = x2 - x1,
-        h = end_y - start_y
-    )
-    .unwrap();
-
-    // Pentagon/tab-shaped label (WSD style)
-    let label_text = kind.as_str();
-    let label_width = (label_text.len() as f64 * 8.0 + 12.0).max(35.0);
-    let label_height = 20.0;
-    let notch_size = 8.0; // Size of the diagonal cut at bottom-right
-
-    // Pentagon path: top-left -> top-right -> right-notch -> bottom-right -> bottom-left
-    let pentagon_path = format!(
-        "M {x1} {y1} L {x2} {y1} L {x2} {y2} L {x3} {y3} L {x1} {y3} Z",
-        x1 = x1,
-        y1 = start_y,
-        x2 = x1 + label_width,
-        y2 = start_y + label_height - notch_size,
-        x3 = x1 + label_width - notch_size,
-        y3 = start_y + label_height
-    );
-
-    writeln!(
-        svg,
-        r##"<path d="{path}" fill="{fill}" stroke="{stroke}"/>"##,
-        path = pentagon_path,
-        fill = theme.block_label_fill,
-        stroke = theme.block_stroke
-    )
-    .unwrap();
-
-    // Block type label text
-    writeln!(
-        svg,
-        r#"<text x="{x}" y="{y}" class="block-label">{kind}</text>"#,
-        x = x1 + 5.0,
-        y = start_y + 14.0,
-        kind = label_text
-    )
-    .unwrap();
-
-    // Condition label (outside the pentagon)
-    if !label.is_empty() {
-        writeln!(
-            svg,
-            r#"<text x="{x}" y="{y}" class="block-label">[{label}]</text>"#,
-            x = x1 + label_width + 8.0,
-            y = start_y + 14.0,
-            label = escape_xml(label)
-        )
-        .unwrap();
-    }
-
-    // Else separator
-    if else_items.is_some() {
-        writeln!(
-            svg,
-            r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{c}" stroke-dasharray="5,3"/>"##,
-            x1 = x1,
-            y = else_y,
-            x2 = x2,
-            c = theme.block_stroke
-        )
-        .unwrap();
-        writeln!(
-            svg,
-            r#"<text x="{x}" y="{y}" class="block-label">[else]</text>"#,
-            x = x1 + 4.0,
-            y = else_y - 4.0
-        )
-        .unwrap();
-    }
+    // Block frame, labels, and else separators are rendered earlier by render_block_labels()
+    // which is called after lifelines are drawn, so labels appear on top of lifelines
 }
 
 fn render_activations(svg: &mut String, state: &mut RenderState, footer_y: f64) {

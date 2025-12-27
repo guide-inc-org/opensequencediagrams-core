@@ -67,6 +67,20 @@ pub struct Theme {
     pub actor_fill: String,
     /// Actor stroke color
     pub actor_stroke: String,
+    /// State box fill color
+    pub state_fill: String,
+    /// State box stroke color
+    pub state_stroke: String,
+    /// State text color
+    pub state_text_color: String,
+    /// Ref box fill color
+    pub ref_fill: String,
+    /// Ref box stroke color
+    pub ref_stroke: String,
+    /// Ref text color
+    pub ref_text_color: String,
+    /// Description text color
+    pub description_text_color: String,
 }
 
 impl Default for Theme {
@@ -100,6 +114,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#fff".to_string(),
             actor_stroke: "#333".to_string(),
+            state_fill: "#e8f5e9".to_string(),
+            state_stroke: "#4caf50".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#fff3e0".to_string(),
+            ref_stroke: "#ff9800".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#666".to_string(),
         }
     }
 
@@ -127,6 +148,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#4a90d9".to_string(),
             actor_stroke: "#2a5a8a".to_string(),
+            state_fill: "#e3f2fd".to_string(),
+            state_stroke: "#1976d2".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#e8f4fd".to_string(),
+            ref_stroke: "#4a90d9".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#666".to_string(),
         }
     }
 
@@ -154,6 +182,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#2d8659".to_string(),
             actor_stroke: "#1a5c3a".to_string(),
+            state_fill: "#e8f5e9".to_string(),
+            state_stroke: "#2d8659".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#e8f5e9".to_string(),
+            ref_stroke: "#2d8659".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#666".to_string(),
         }
     }
 
@@ -181,6 +216,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#c2185b".to_string(),
             actor_stroke: "#880e4f".to_string(),
+            state_fill: "#fce4ec".to_string(),
+            state_stroke: "#c2185b".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#fce4ec".to_string(),
+            ref_stroke: "#c2185b".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#666".to_string(),
         }
     }
 
@@ -208,6 +250,13 @@ impl Theme {
             font_family: "'Comic Sans MS', 'Chalkboard', cursive".to_string(),
             actor_fill: "#fff".to_string(),
             actor_stroke: "#333".to_string(),
+            state_fill: "#f5f5f5".to_string(),
+            state_stroke: "#333".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#f5f5f5".to_string(),
+            ref_stroke: "#333".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#666".to_string(),
         }
     }
 
@@ -235,6 +284,13 @@ impl Theme {
             font_family: "Georgia, serif".to_string(),
             actor_fill: "#8d6e63".to_string(),
             actor_stroke: "#5d4037".to_string(),
+            state_fill: "#efebe9".to_string(),
+            state_stroke: "#8d6e63".to_string(),
+            state_text_color: "#3e2723".to_string(),
+            ref_fill: "#efebe9".to_string(),
+            ref_stroke: "#8d6e63".to_string(),
+            ref_text_color: "#3e2723".to_string(),
+            description_text_color: "#5d4037".to_string(),
         }
     }
 
@@ -262,6 +318,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#fff".to_string(),
             actor_stroke: "#000".to_string(),
+            state_fill: "#f0f0f0".to_string(),
+            state_stroke: "#000".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#f0f0f0".to_string(),
+            ref_stroke: "#000".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#333".to_string(),
         }
     }
 
@@ -289,6 +352,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#a8e6cf".to_string(),
             actor_stroke: "#56ab91".to_string(),
+            state_fill: "#dcedc1".to_string(),
+            state_stroke: "#56ab91".to_string(),
+            state_text_color: "#2d5a4a".to_string(),
+            ref_fill: "#dcedc1".to_string(),
+            ref_stroke: "#56ab91".to_string(),
+            ref_text_color: "#2d5a4a".to_string(),
+            description_text_color: "#56ab91".to_string(),
         }
     }
 
@@ -316,6 +386,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#fff".to_string(),
             actor_stroke: "#1976d2".to_string(),
+            state_fill: "#e3f2fd".to_string(),
+            state_stroke: "#1976d2".to_string(),
+            state_text_color: "#1976d2".to_string(),
+            ref_fill: "#e3f2fd".to_string(),
+            ref_stroke: "#1976d2".to_string(),
+            ref_text_color: "#1976d2".to_string(),
+            description_text_color: "#1976d2".to_string(),
         }
     }
 
@@ -343,6 +420,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#ffcc80".to_string(),
             actor_stroke: "#ef6c00".to_string(),
+            state_fill: "#fff3e0".to_string(),
+            state_stroke: "#ef6c00".to_string(),
+            state_text_color: "#000".to_string(),
+            ref_fill: "#fff3e0".to_string(),
+            ref_stroke: "#ef6c00".to_string(),
+            ref_text_color: "#000".to_string(),
+            description_text_color: "#ef6c00".to_string(),
         }
     }
 
@@ -370,6 +454,13 @@ impl Theme {
             font_family: "sans-serif".to_string(),
             actor_fill: "#757575".to_string(),
             actor_stroke: "#424242".to_string(),
+            state_fill: "#eeeeee".to_string(),
+            state_stroke: "#757575".to_string(),
+            state_text_color: "#212121".to_string(),
+            ref_fill: "#eeeeee".to_string(),
+            ref_stroke: "#757575".to_string(),
+            ref_text_color: "#212121".to_string(),
+            description_text_color: "#757575".to_string(),
         }
     }
 
