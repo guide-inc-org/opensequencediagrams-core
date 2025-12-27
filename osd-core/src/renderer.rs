@@ -1926,6 +1926,9 @@ fn render_message(
     let y = state.current_y;
     let has_label_text = lines.iter().any(|line| !line.trim().is_empty());
 
+    // Open message group
+    writeln!(svg, r#"<g class="message">"#).unwrap();
+
     if is_self {
         // Self message - loop back
         let loop_width = 40.0;
@@ -1933,7 +1936,7 @@ fn render_message(
         let loop_height = (text_block_height + 10.0).max(25.0);
         writeln!(
             svg,
-            r#"<path d="M {x1} {y} L {x2} {y} L {x2} {y2} L {x1} {y2}" class="{cls}" marker-end="{marker}"/>"#,
+            r#"  <path d="M {x1} {y} L {x2} {y} L {x2} {y2} L {x1} {y2}" class="{cls}" marker-end="{marker}"/>"#,
             x1 = x1,
             y = y,
             x2 = x1 + loop_width,
@@ -1971,13 +1974,16 @@ fn render_message(
             let line_y = y + 4.0 + (i as f64 + 0.5) * line_height + label_offset;
             writeln!(
                 svg,
-                r#"<text x="{x}" y="{y}" class="message-text">{t}</text>"#,
+                r#"  <text x="{x}" y="{y}" class="message-text">{t}</text>"#,
                 x = text_x,
                 y = line_y,
                 t = escape_xml(line)
             )
             .unwrap();
         }
+
+        // Close message group
+        writeln!(svg, r#"</g>"#).unwrap();
 
         let mut spacing = self_message_spacing(&state.config, lines.len());
         if state.in_serial_block() {
@@ -1998,7 +2004,7 @@ fn render_message(
         // Draw arrow line (slanted if delay)
         writeln!(
             svg,
-            r#"<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" class="{cls}" marker-end="{marker}"/>"#,
+            r#"  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" class="{cls}" marker-end="{marker}"/>"#,
             x1 = x1,
             y1 = y,
             x2 = x2,
@@ -2035,13 +2041,16 @@ fn render_message(
             let line_y = text_y - (lines.len() - 1 - i) as f64 * line_height + label_offset;
             writeln!(
                 svg,
-                r#"<text x="{x}" y="{y}" class="message-text" text-anchor="middle">{t}</text>"#,
+                r#"  <text x="{x}" y="{y}" class="message-text" text-anchor="middle">{t}</text>"#,
                 x = text_x,
                 y = line_y,
                 t = escape_xml(line)
             )
             .unwrap();
         }
+
+        // Close message group
+        writeln!(svg, r#"</g>"#).unwrap();
 
         // Add row_height plus delay offset
         state.current_y += state.config.row_height + delay_offset;
