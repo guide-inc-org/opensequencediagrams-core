@@ -147,9 +147,10 @@ const SELF_MESSAGE_GAP: f64 = 14.0;              // WSD: gap after self-message 
 const SELF_MESSAGE_PRE_GAP_REDUCTION: f64 = 9.0; // WSD: reduced gap before self-message
 const CREATE_MESSAGE_SPACING: f64 = 27.5;        // Fine-tuned from 41
 const DESTROY_SPACING: f64 = 10.7;               // Fine-tuned from 15
-const NOTE_PADDING: f64 = 5.7;                   // Fine-tuned from 9.5
+const NOTE_PADDING: f64 = 16.0;                  // WSD: ~116px for OAuth2+JWT note
 const NOTE_LINE_HEIGHT_EXTRA: f64 = 3.4;         // Fine-tuned from 6
 const NOTE_MARGIN: f64 = 14.0;                   // WSD: ~14px margin between notes
+const NOTE_Y_OFFSET: f64 = -18.0;                // WSD: notes start slightly higher
 const STATE_LINE_HEIGHT_EXTRA: f64 = 11.0;
 const REF_LINE_HEIGHT_EXTRA: f64 = 16.333333;
 const ELSE_RETURN_GAP: f64 = 1.0;
@@ -2609,51 +2610,53 @@ fn render_note(
     let padding = note_padding(&state.config);
     let note_height = padding * 2.0 + lines.len() as f64 * line_height;
 
-    // Calculate note width based on content or participant span
-    // WSD: ~8px per char for ASCII, narrower than default
+    // Calculate note width based on content
+    // WSD: ~7px per char (proportional font varies), left padding only (no right padding)
     let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(10);
-    let content_width = (max_line_len as f64 * 8.0 + padding * 2.0).max(70.0);
+    let left_padding = 6.0; // WSD uses ~6px left padding
+    let content_width = (max_line_len as f64 * 7.0 + left_padding).max(70.0);
+
+    // WSD: fixed margin between note edge and lifeline (not dependent on participant width)
+    let note_margin = 13.0;
 
     let (x, note_width, text_anchor) = match position {
         NotePosition::Left => {
             let px = state.get_x(&participants[0]);
-            let p_width = state.get_participant_width(&participants[0]);
             let w = content_width.min(300.0);
-            // Clamp to not go off left edge
-            let x = (px - p_width / 2.0 - w - 10.0).max(state.config.padding);
+            // Note right edge at px - margin, so left edge at px - margin - w
+            let x = (px - note_margin - w).max(state.config.padding);
             (x, w, "start")
         }
         NotePosition::Right => {
             let px = state.get_x(&participants[0]);
-            let p_width = state.get_participant_width(&participants[0]);
             let w = content_width.min(300.0);
-            (px + p_width / 2.0 + 5.0, w, "start")
+            // Note left edge at px + margin
+            (px + note_margin, w, "start")
         }
         NotePosition::Over => {
+            // WSD: fixed overhang from lifeline (not dependent on participant width)
+            let note_overhang = 13.0;
+
             if participants.len() == 1 {
                 let px = state.get_x(&participants[0]);
-                // Allow wider notes for single participant
+                // Note width = content width, centered on lifeline
                 let w = content_width;
-                // Clamp to stay within diagram
                 let x = (px - w / 2.0).max(state.config.padding);
                 (x, w, "middle")
             } else {
                 // Span across multiple participants
+                // WSD: note extends from (x1 - overhang) to (x2 + overhang)
                 let x1 = state.get_x(&participants[0]);
                 let x2 = state.get_x(participants.last().unwrap());
-                let p1_width = state.get_participant_width(&participants[0]);
-                let p2_width = state.get_participant_width(participants.last().unwrap());
-                let span_width = (x2 - x1).abs() + (p1_width + p2_width) / 2.0 * 0.8;
+                let span_width = (x2 - x1).abs() + note_overhang * 2.0;
                 let w = span_width.max(content_width);
-                let center = (x1 + x2) / 2.0;
-                // Clamp x to stay within padding
-                let x = (center - w / 2.0).max(state.config.padding);
-                (x, w, "middle")
+                let x = (x1 - note_overhang).max(state.config.padding);
+                (x, w, "middle") // Center text in multi-participant note
             }
         }
     };
 
-    let y = state.current_y;
+    let y = state.current_y + NOTE_Y_OFFSET;
     let fold_size = 8.0; // Size of the dog-ear fold
 
     // Note background with dog-ear (folded corner) effect
@@ -2689,11 +2692,11 @@ fn render_note(
     )
     .unwrap();
 
-    // Note text
+    // Note text - use left_padding (6px) for horizontal text position
     let text_x = match text_anchor {
         "middle" => x + note_width / 2.0,
-        "start" => x + padding,
-        _ => x + note_width - padding,
+        "start" => x + left_padding,
+        _ => x + note_width - left_padding,
     };
 
     for (i, line) in lines.iter().enumerate() {
