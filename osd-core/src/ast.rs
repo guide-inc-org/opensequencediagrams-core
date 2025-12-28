@@ -243,12 +243,12 @@ pub enum NotePosition {
 /// Footer style for diagram (controlled by option footer=xxx)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FooterStyle {
-    /// No footer at all (default)
-    #[default]
+    /// No footer at all
     None,
     /// Simple horizontal line
     Bar,
-    /// Participant boxes at bottom
+    /// Participant boxes at bottom (default, WSD compatible)
+    #[default]
     Box,
 }
 
