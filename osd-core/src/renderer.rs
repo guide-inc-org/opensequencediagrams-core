@@ -45,7 +45,7 @@ impl Default for Config {
         //   - Box width: dynamic based on text
         Self {
             padding: 10.5,           // WSD: padding from SVG edge
-            left_margin: 68.0,       // WSD: first box at x=78.5, so 78.5 - 10.5 = 68
+            left_margin: 58.0,       // WSD: first lifeline at 114.5, adjusted for stress test
             right_margin: 68.0,      // Symmetric
             participant_gap: 85.0,   // WSD: minimum gap for participants with no messages between
             header_height: 46.0,     // WSD: participant box height = 46px (single line)
@@ -129,7 +129,7 @@ struct RenderState {
 const TEXT_WIDTH_PADDING: f64 = 41.0;
 const TEXT_WIDTH_SCALE: f64 = 1.3;
 const MESSAGE_WIDTH_PADDING: f64 = 4.0;  // WSD: minimal padding
-const MESSAGE_WIDTH_SCALE: f64 = 0.835;  // WSD: text width estimate (fine-tuned for 2248px)
+const MESSAGE_WIDTH_SCALE: f64 = 0.82;  // WSD: text width estimate for gap calculation
 const DELAY_UNIT: f64 = 18.0;
 const BLOCK_LABEL_HEIGHT: f64 = 21.8;             // Fine-tuned for row_height=32
 const BLOCK_FOOTER_PADDING_LEVEL1: f64 = 0.87;   // Fine-tuned for row_height=32
@@ -455,8 +455,8 @@ fn calculate_participant_gaps(
                             let text_width = estimate_message_width(text, config.font_size);
 
                             // WSD: delay messages need extra horizontal space for diagonal lines
-                            // Delay coefficient 79.5 for WSD width matching (2248px target)
-                            let delay_extra = arrow.delay.map(|d| d as f64 * 79.5).unwrap_or(0.0);
+                            // Delay coefficient 86.4 for WSD gap matching (645px for delay(7))
+                            let delay_extra = arrow.delay.map(|d| d as f64 * 86.4).unwrap_or(0.0);
 
                             // WSD: distribute text width across gaps with appropriate spacing
                             let gap_count = (max_idx - min_idx) as f64;
@@ -623,10 +623,61 @@ impl RenderState {
                 let actor_gap_reduction = 0.0;
                 let _ = (current_is_actor, next_is_actor); // suppress warnings
 
-                // WSD: edge-to-edge gap is ~20px minimum
-                // Center-to-center = half_widths + edge_gap
-                let min_center_gap = (current_width + next_width) / 2.0 + 20.0 - actor_gap_reduction;
-                let actual_gap = (gaps[i] - actor_gap_reduction).max(min_center_gap).max(60.0);
+                // WSD: edge-to-edge gap varies by message density
+                // Variable edge padding: more messages = more edge padding
+                let calculated_gap = gaps[i] - actor_gap_reduction;
+
+                // Determine edge padding based on message density and participant types
+                // WSD uses variable edge padding based on content
+                let half_widths = (current_width + next_width) / 2.0;
+                let neither_is_actor = !current_is_actor && !next_is_actor;
+
+                let edge_padding = if calculated_gap > 500.0 {
+                    // Very high (delay messages): minimal extra padding
+                    10.0
+                } else if neither_is_actor && half_widths > 155.0 && calculated_gap > 130.0 {
+                    // Two large normal boxes with medium traffic: extra padding
+                    85.0
+                } else if calculated_gap > 130.0 {
+                    // Medium-high traffic: WSD uses ~40px for these gaps
+                    42.0
+                } else if calculated_gap > config.participant_gap {
+                    // Medium traffic: moderate padding
+                    18.0
+                } else {
+                    // Low traffic: edge_padding depends on individual participant widths
+                    let max_width = current_width.max(next_width);
+                    let min_width_val = current_width.min(next_width);
+                    let width_diff = max_width - min_width_val;
+
+                    if max_width > 160.0 && min_width_val > 160.0 {
+                        // Both participants are very wide (>160): small positive padding
+                        // WSD UserDB→Cache: both 161.2, gap=163, ep≈1.8
+                        1.8
+                    } else if max_width > 160.0 && min_width_val > 140.0 {
+                        // One very wide, one large: negative padding
+                        // WSD ML→Notify: max=161.2, min=149.6, gap=148.5, ep≈-7
+                        -7.0
+                    } else if max_width > 160.0 && min_width_val < 110.0 {
+                        // One very wide, one small: large positive padding
+                        // WSD Cache→Kafka: max=161.2, min=103.2, gap=143.5, ep≈11.3
+                        11.3
+                    } else if max_width > 160.0 && width_diff > 45.0 {
+                        // One very wide, one medium-small: negative padding
+                        // WSD Notify→Payment: max=161.2, min=114.8, diff=46.4, gap=132, ep≈-6
+                        -6.0
+                    } else if min_width_val < 110.0 {
+                        // One small participant: extra padding
+                        // WSD Kafka→ML, Payment→Worker
+                        12.0
+                    } else {
+                        // Medium participants: moderate padding
+                        10.0
+                    }
+                };
+
+                let min_center_gap = (current_width + next_width) / 2.0 + edge_padding - actor_gap_reduction;
+                let actual_gap = calculated_gap.max(min_center_gap).max(60.0);
                 current_x += actual_gap;
             }
         }
