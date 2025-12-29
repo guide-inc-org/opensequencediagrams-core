@@ -131,26 +131,32 @@ const TEXT_WIDTH_SCALE: f64 = 1.3;
 const MESSAGE_WIDTH_PADDING: f64 = 4.0;  // WSD: minimal padding
 const MESSAGE_WIDTH_SCALE: f64 = 0.82;  // WSD: text width estimate for gap calculation
 const DELAY_UNIT: f64 = 18.0;
-const BLOCK_LABEL_HEIGHT: f64 = 22.0;             // WSD: label pentagon height
-const BLOCK_FOOTER_PADDING_LEVEL1: f64 = 0.75;   // WSD: footer padding for depth 1
-const BLOCK_FOOTER_PADDING_DEEP: f64 = 0.75;     // WSD: footer padding for nested
-const BLOCK_FOOTER_PADDING_TOP_FACTOR: f64 = 0.9; // WSD: top-level footer padding
-const BLOCK_ELSE_SPACING_LEVEL1: f64 = 0.7;      // WSD: else section spacing
-const BLOCK_ELSE_SPACING_DEEP: f64 = 0.65;       // WSD: else section spacing nested
-const BLOCK_ELSE_TOP_SPACING_FACTOR: f64 = 0.65; // WSD: else top spacing
-const BLOCK_NESTED_HEADER_ADJUST: f64 = 22.0;    // WSD: nested block header adjust
-const BLOCK_NESTED_FRAME_SHIFT: f64 = 22.0;      // WSD: nested block frame shift
-const PARALLEL_BLOCK_GAP: f64 = 13.5;            // Fine-tuned from 22
+// ブロック関連定数（シンプル化）
+const BLOCK_PADDING: f64 = 8.0;                  // 4隅同じパディング
+const BLOCK_LABEL_HEIGHT: f64 = 22.0;            // ラベル領域の高さ（ペンタゴン部分）
+const BLOCK_TITLE_PADDING: f64 = 12.0;           // タイトル行と最初のメッセージの間のパディング
+const BLOCK_FOOTER_PADDING: f64 = 8.0;           // フッター余白（統一）
+const BLOCK_ELSE_BEFORE: f64 = 8.0;              // else線の前の余白（小さめ）
+const BLOCK_ELSE_AFTER: f64 = 32.0;              // else線の後の余白（メッセージテキストが線と重ならないように）
+const BLOCK_NESTED_OFFSET: f64 = 22.0;           // ネスト時のオフセット
+const BLOCK_GAP: f64 = 14.0;                     // ブロック間の余白
+
+// 要素間余白
+const ROW_SPACING: f64 = 20.0;                   // 要素間の基本余白（広め）
+
 const MESSAGE_SPACING_MULT: f64 = 0.375;         // Fine-tuned from 0.5625
 const SELF_MESSAGE_MIN_SPACING: f64 = 54.0;      // Fine-tuned from 78
 const SELF_MESSAGE_GAP: f64 = 14.0;              // WSD: gap after self-message loop
 const SELF_MESSAGE_PRE_GAP_REDUCTION: f64 = 9.0; // WSD: reduced gap before self-message
 const CREATE_MESSAGE_SPACING: f64 = 27.5;        // Fine-tuned from 41
 const DESTROY_SPACING: f64 = 10.7;               // Fine-tuned from 15
-const NOTE_PADDING: f64 = 16.0;                  // WSD: ~116px for OAuth2+JWT note
-const NOTE_LINE_HEIGHT_EXTRA: f64 = 3.4;         // Fine-tuned from 6
-const NOTE_MARGIN: f64 = 14.0;                   // WSD: ~14px margin between notes
-const NOTE_Y_OFFSET: f64 = -18.0;                // WSD: notes start slightly higher
+// ノート関連定数（シンプル化）
+const NOTE_PADDING: f64 = 8.0;                   // 4隅同じパディング
+const NOTE_MARGIN: f64 = 10.0;                   // ノート端とライフライン間
+const NOTE_FOLD_SIZE: f64 = 8.0;                 // 折り目サイズ
+const NOTE_CHAR_WIDTH: f64 = 7.0;                // 文字幅推定値
+const NOTE_LINE_HEIGHT: f64 = 17.0;              // 行高さ（フォント13px + 4px）
+const NOTE_MIN_WIDTH: f64 = 50.0;                // 最小幅
 const STATE_LINE_HEIGHT_EXTRA: f64 = 11.0;
 const REF_LINE_HEIGHT_EXTRA: f64 = 16.333333;
 const ELSE_RETURN_GAP: f64 = 1.0;
@@ -167,44 +173,30 @@ const MESSAGE_LABEL_COLLISION_STEP_RATIO: f64 = 0.9;
 const MESSAGE_LABEL_ASCENT_FACTOR: f64 = 0.8;
 const MESSAGE_LABEL_DESCENT_FACTOR: f64 = 0.2;
 
-fn block_header_space(config: &Config, depth: usize) -> f64 {
-    let base = config.row_height + BLOCK_LABEL_HEIGHT;
-    if depth == 0 {
-        base
-    } else {
-        (base - BLOCK_NESTED_HEADER_ADJUST).max(BLOCK_LABEL_HEIGHT)
-    }
+fn block_header_space(_config: &Config, _depth: usize) -> f64 {
+    // タイトル行（ペンタゴン+ラベル）の高さ + タイトルとコンテンツ間のパディング
+    BLOCK_LABEL_HEIGHT + BLOCK_TITLE_PADDING
 }
 
 fn block_frame_shift(depth: usize) -> f64 {
     if depth == 0 {
         0.0
-    } else if depth == 1 {
-        BLOCK_NESTED_FRAME_SHIFT
     } else {
-        BLOCK_NESTED_FRAME_SHIFT
+        BLOCK_NESTED_OFFSET
     }
 }
 
-fn block_footer_padding(config: &Config, depth: usize) -> f64 {
-    let factor = if depth == 0 {
-        BLOCK_FOOTER_PADDING_TOP_FACTOR
-    } else if depth == 1 {
-        BLOCK_FOOTER_PADDING_LEVEL1
-    } else {
-        BLOCK_FOOTER_PADDING_DEEP
-    };
-    config.row_height * factor
+fn block_footer_padding(_config: &Config, _depth: usize) -> f64 {
+    // シンプル化：深さに関係なく統一値
+    BLOCK_FOOTER_PADDING
 }
 
-fn block_else_spacing(config: &Config, depth: usize) -> f64 {
-    if depth == 0 {
-        config.row_height * BLOCK_ELSE_TOP_SPACING_FACTOR
-    } else if depth == 1 {
-        config.row_height * BLOCK_ELSE_SPACING_LEVEL1
-    } else {
-        config.row_height * BLOCK_ELSE_SPACING_DEEP
-    }
+fn block_else_before(_config: &Config, _depth: usize) -> f64 {
+    BLOCK_ELSE_BEFORE
+}
+
+fn block_else_after(_config: &Config, _depth: usize) -> f64 {
+    BLOCK_ELSE_AFTER
 }
 
 fn message_spacing_line_height(config: &Config) -> f64 {
@@ -225,8 +217,9 @@ fn self_message_spacing(config: &Config, lines: usize) -> f64 {
     }
 }
 
-fn note_line_height(config: &Config) -> f64 {
-    config.font_size + NOTE_LINE_HEIGHT_EXTRA
+fn note_line_height(_config: &Config) -> f64 {
+    // シンプル化：固定値（フォントサイズ13px + 余白4px = 17px）
+    NOTE_LINE_HEIGHT
 }
 
 fn note_padding(_config: &Config) -> f64 {
@@ -398,11 +391,11 @@ fn block_tab_width(kind: &str) -> f64 {
 }
 
 /// Calculate note width based on text content
-fn calculate_note_width(text: &str, config: &Config) -> f64 {
+fn calculate_note_width(text: &str, _config: &Config) -> f64 {
     let lines: Vec<&str> = text.split("\\n").collect();
-    let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(10);
-    let padding = config.note_padding;
-    (max_line_len as f64 * 10.0 + padding * 2.0).max(80.0).min(300.0)
+    let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(5);
+    let text_width = max_line_len as f64 * NOTE_CHAR_WIDTH;
+    (NOTE_PADDING * 2.0 + text_width).max(NOTE_MIN_WIDTH)
 }
 
 /// Calculate required right margin based on right-side notes on the rightmost participant only
@@ -453,11 +446,67 @@ fn calculate_right_margin(
 
     process_items_for_right_notes(items, &rightmost_id, &mut max_right_note_width, config);
 
-    // right_margin needs to accommodate: gap (10) + note_width
+    // right_margin needs to accommodate: NOTE_MARGIN + note_width
     if max_right_note_width > 0.0 {
-        (max_right_note_width + 10.0).max(config.right_margin)
+        (max_right_note_width + NOTE_MARGIN).max(config.right_margin)
     } else {
         config.right_margin
+    }
+}
+
+/// Calculate required left margin based on left-side notes on the leftmost participant
+fn calculate_left_margin(
+    participants: &[Participant],
+    items: &[Item],
+    config: &Config,
+) -> f64 {
+    let leftmost_id = match participants.first() {
+        Some(p) => p.id().to_string(),
+        None => return config.padding,
+    };
+    let mut max_left_note_width: f64 = 0.0;
+
+    fn process_items_for_left_notes(
+        items: &[Item],
+        leftmost_id: &str,
+        max_width: &mut f64,
+        config: &Config,
+    ) {
+        for item in items {
+            match item {
+                Item::Note {
+                    position: NotePosition::Left,
+                    participants,
+                    text,
+                } => {
+                    // Only consider notes on the leftmost participant
+                    if participants.first().map(|s| s.as_str()) == Some(leftmost_id) {
+                        let note_width = calculate_note_width(text, config);
+                        if note_width > *max_width {
+                            *max_width = note_width;
+                        }
+                    }
+                }
+                Item::Block {
+                    items, else_items, ..
+                } => {
+                    process_items_for_left_notes(items, leftmost_id, max_width, config);
+                    if let Some(else_items) = else_items {
+                        process_items_for_left_notes(else_items, leftmost_id, max_width, config);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    process_items_for_left_notes(items, &leftmost_id, &mut max_left_note_width, config);
+
+    // left_margin needs to accommodate: note_width + NOTE_MARGIN
+    if max_left_note_width > 0.0 {
+        (max_left_note_width + NOTE_MARGIN).max(config.padding)
+    } else {
+        config.padding
     }
 }
 
@@ -528,20 +577,38 @@ fn calculate_participant_gaps(
                     }
                 }
                 Item::Note {
-                    position: NotePosition::Right,
+                    position,
                     participants: note_participants,
-                    ..
+                    text,
                 } => {
-                    // Right-side notes: WSD allows notes to overlap with next participant
-                    // Only ensure minimal gap - note rendering handles overlap
+                    // ノート幅を計算
+                    let note_width = calculate_note_width(text, config);
+
                     if let Some(participant) = note_participants.first() {
                         if let Some(&idx) = participant_index.get(participant) {
-                            if idx < gaps.len() {
-                                // WSD: notes don't significantly increase gaps
-                                // They overlap or extend outside bounds
-                                let needed_gap = config.participant_gap * 1.3;
-                                if needed_gap > gaps[idx] {
-                                    gaps[idx] = needed_gap;
+                            match position {
+                                NotePosition::Left => {
+                                    // 左ノートの場合：左隣の参加者との間にスペースが必要
+                                    if idx > 0 {
+                                        // ノート幅 + マージン分のギャップが必要
+                                        let needed_gap = note_width + NOTE_MARGIN * 2.0;
+                                        if needed_gap > gaps[idx - 1] {
+                                            gaps[idx - 1] = needed_gap;
+                                        }
+                                    }
+                                }
+                                NotePosition::Right => {
+                                    // 右ノートの場合：右隣の参加者との間にスペースが必要
+                                    if idx < gaps.len() {
+                                        let needed_gap = note_width + NOTE_MARGIN * 2.0;
+                                        if needed_gap > gaps[idx] {
+                                            gaps[idx] = needed_gap;
+                                        }
+                                    }
+                                }
+                                NotePosition::Over => {
+                                    // 中央ノートは両端にまたがる場合のみ処理
+                                    // 単一参加者の場合は幅を超えない限り問題なし
                                 }
                             }
                         }
@@ -631,10 +698,9 @@ impl RenderState {
 
         let gaps = calculate_participant_gaps(&participants, items, &config);
 
-        // Left margin for notes/actions on leftmost participant
-        let left_margin = config.left_margin;
-        // Right margin for self-loops and notes on rightmost participant
-        // Dynamically calculate based on right-side notes
+        // Left margin for notes on leftmost participant (dynamic)
+        let left_margin = calculate_left_margin(&participants, items, &config);
+        // Right margin for self-loops and notes on rightmost participant (dynamic)
         let right_margin = calculate_right_margin(&participants, items, &config);
 
         let mut participant_x = HashMap::new();
@@ -847,6 +913,47 @@ impl RenderState {
             .values()
             .map(|acts| acts.iter().filter(|(_, end)| end.is_none()).count())
             .sum()
+    }
+
+    /// Check if a participant has an active activation at the given Y position
+    fn is_participant_active_at(&self, participant: &str, y: f64) -> bool {
+        if let Some(acts) = self.activations.get(participant) {
+            acts.iter().any(|(start_y, end_y)| {
+                *start_y <= y && end_y.map_or(true, |end| y <= end)
+            })
+        } else {
+            false
+        }
+    }
+
+    /// Get arrow start X position, accounting for activation bar
+    fn get_arrow_start_x(&self, participant: &str, y: f64, going_right: bool) -> f64 {
+        let x = self.get_x(participant);
+        if self.is_participant_active_at(participant, y) {
+            let half_width = self.config.activation_width / 2.0;
+            if going_right {
+                x + half_width // Arrow starts from right edge of activation bar
+            } else {
+                x - half_width // Arrow starts from left edge of activation bar
+            }
+        } else {
+            x
+        }
+    }
+
+    /// Get arrow end X position, accounting for activation bar
+    fn get_arrow_end_x(&self, participant: &str, y: f64, coming_from_right: bool) -> f64 {
+        let x = self.get_x(participant);
+        if self.is_participant_active_at(participant, y) {
+            let half_width = self.config.activation_width / 2.0;
+            if coming_from_right {
+                x + half_width // Arrow ends at right edge of activation bar
+            } else {
+                x - half_width // Arrow ends at left edge of activation bar
+            }
+        } else {
+            x
+        }
     }
 
     fn diagram_width(&self) -> f64 {
@@ -1082,15 +1189,15 @@ fn calculate_block_bounds_with_label(
     // Convert Vec<&Item> to slice for find_involved_participants
     let items_slice: Vec<Item> = all_items.into_iter().cloned().collect();
 
-    let (base_x1, base_x2, includes_leftmost) =
-        if let Some((min_left, max_right, includes_leftmost)) =
+    let (base_x1, base_x2) =
+        if let Some((min_left, max_right, _includes_leftmost)) =
             find_involved_participants(&items_slice, state)
         {
             let margin = state.config.block_margin;
-            (min_left - margin, max_right + margin, includes_leftmost)
+            (min_left - margin, max_right + margin)
         } else {
             // Fallback to full width if no participants found
-            (state.block_left(), state.block_right(), false)
+            (state.block_left(), state.block_right())
         };
 
     // Calculate minimum width needed for label
@@ -1127,9 +1234,9 @@ fn calculate_block_bounds_with_label(
         x2 -= inset;
     }
 
-    if depth == 0 && includes_leftmost {
-        x1 = x1.min(state.config.padding);
-    }
+    // 最左端の参加者を含む場合でも、参加者ボックスの左端から適度なマージンを取る
+    // （paddingまで拡張しない）
+    // Note: WSDはブロックを参加者に近づけて配置する
 
     (x1, x2)
 }
@@ -1164,6 +1271,8 @@ fn collect_block_backgrounds(
                 let delay_offset = arrow.delay.map(|d| d as f64 * DELAY_UNIT).unwrap_or(0.0);
 
                 if is_self {
+                    // WSD: reduced gap before self-message (must match render_message)
+                    state.current_y -= SELF_MESSAGE_PRE_GAP_REDUCTION;
                     let mut spacing = self_message_spacing(&state.config, lines.len());
                     if state.in_serial_block() {
                         spacing -= SERIAL_SELF_MESSAGE_ADJUST;
@@ -1209,7 +1318,8 @@ fn collect_block_backgrounds(
                 let line_height = note_line_height(&state.config);
                 let note_height =
                     note_padding(&state.config) * 2.0 + lines.len() as f64 * line_height;
-                state.current_y += note_height.max(state.config.row_height) + NOTE_MARGIN;
+                // ROW_SPACING を使用（render_note と統一）
+                state.current_y += note_height.max(state.config.row_height) + ROW_SPACING;
             }
             Item::State { text, .. } => {
                 let lines: Vec<&str> = text.split("\\n").collect();
@@ -1265,7 +1375,7 @@ fn collect_block_backgrounds(
                     }
                     *active_activation_count = start_activation_count;
                     let gap = if parallel_needs_gap(items) {
-                        PARALLEL_BLOCK_GAP
+                        BLOCK_GAP
                     } else {
                         0.0
                     };
@@ -1319,7 +1429,9 @@ fn collect_block_backgrounds(
                 state.current_y += block_header_space(&state.config, depth);
                 collect_block_backgrounds(state, items, depth + 1, active_activation_count);
 
+                // else線の前にパディングを追加（小さめ）
                 let else_y = if else_items.is_some() {
+                    state.current_y += block_else_before(&state.config, depth);
                     Some(state.current_y)
                 } else {
                     None
@@ -1327,7 +1439,8 @@ fn collect_block_backgrounds(
 
                 if let Some(else_items) = else_items {
                     state.push_else_return_pending();
-                    state.current_y += block_else_spacing(&state.config, depth);
+                    // else線の後にパディングを追加（十分な間隔）
+                    state.current_y += block_else_after(&state.config, depth);
                     collect_block_backgrounds(
                         state,
                         else_items,
@@ -1337,10 +1450,11 @@ fn collect_block_backgrounds(
                     state.pop_else_return_pending();
                 }
 
-                let end_y = state.current_y - state.config.row_height
-                    + block_footer_padding(&state.config, depth);
+                // ブロック下端 = 現在のY位置 + フッターパディング
+                // （メッセージがブロック外にはみ出ないように）
+                let end_y = state.current_y + block_footer_padding(&state.config, depth);
                 let frame_end_y = end_y - frame_shift;
-                state.current_y = end_y + state.config.row_height * 1.0;
+                state.current_y = end_y + state.config.row_height;
 
                 // Collect this block's background
                 state.add_block_background(x1, frame_start_y, x2 - x1, frame_end_y - frame_start_y);
@@ -1823,7 +1937,8 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                     let lines = text.split("\\n").count();
                     let note_height =
                         note_padding(config) * 2.0 + lines as f64 * note_line_height(config);
-                    height += note_height.max(config.row_height) + NOTE_MARGIN;
+                    // ROW_SPACING を使用（render_note と統一）
+                    height += note_height.max(config.row_height) + ROW_SPACING;
                 }
                 Item::State { text, .. } => {
                     let lines = text.split("\\n").count();
@@ -1871,7 +1986,7 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                             *parallel_depth -= 1;
                         }
                         let gap = if parallel_needs_gap(items) {
-                            PARALLEL_BLOCK_GAP
+                            BLOCK_GAP
                         } else {
                             0.0
                         };
@@ -1936,7 +2051,8 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                         );
                         if let Some(else_items) = else_items {
                             else_pending.push(true);
-                            height += block_else_spacing(config, depth);
+                            // else線の前後にパディング
+                            height += block_else_before(config, depth) + block_else_after(config, depth);
                             height += inner(
                                 else_items,
                                 config,
@@ -1948,8 +2064,8 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                             );
                             else_pending.pop();
                         }
-                        height += block_footer_padding(config, depth) + config.row_height * 1.0
-                            - config.row_height;
+                        // ブロック下端とその後の余白
+                        height += block_footer_padding(config, depth) + config.row_height;
                     }
                 }
                 Item::Activate { .. } => {
@@ -2325,8 +2441,9 @@ fn render_message(
     create: bool,
     depth: usize,
 ) {
-    let x1 = state.get_x(from);
-    let x2 = state.get_x(to);
+    // Get base lifeline positions (used for text centering and direction calculation)
+    let base_x1 = state.get_x(from);
+    let base_x2 = state.get_x(to);
 
     state.apply_else_return_gap(arrow);
     let active_count = state.active_activation_count();
@@ -2372,6 +2489,11 @@ fn render_message(
 
     let y = state.current_y;
     let has_label_text = lines.iter().any(|line| !line.trim().is_empty());
+
+    // Calculate activation-aware arrow endpoints
+    let going_right = base_x2 > base_x1;
+    let x1 = state.get_arrow_start_x(from, y, going_right);
+    let x2 = state.get_arrow_end_x(to, y, !going_right);
 
     // Open message group
     writeln!(svg, r#"<g class="message">"#).unwrap();
@@ -2463,7 +2585,8 @@ fn render_message(
         let delay_offset = arrow.delay.map(|d| d as f64 * DELAY_UNIT).unwrap_or(0.0);
         let y2 = y + delay_offset;
 
-        let text_x = (x1 + x2) / 2.0;
+        // Text is centered between lifelines (not activation bar edges)
+        let text_x = (base_x1 + base_x2) / 2.0;
         let text_y = (y + y2) / 2.0 - 6.0;  // WSD: label slightly above arrow
 
         // Calculate arrowhead direction and shorten line to not overlap with arrowhead
@@ -2607,57 +2730,45 @@ fn render_note(
 ) {
     let lines: Vec<&str> = text.split("\\n").collect();
     let line_height = note_line_height(&state.config);
-    let padding = note_padding(&state.config);
-    let note_height = padding * 2.0 + lines.len() as f64 * line_height;
 
-    // Calculate note width based on content
-    // WSD: ~7px per char (proportional font varies), left padding only (no right padding)
-    let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(10);
-    let left_padding = 6.0; // WSD uses ~6px left padding
-    let content_width = (max_line_len as f64 * 7.0 + left_padding).max(70.0);
-
-    // WSD: fixed margin between note edge and lifeline (not dependent on participant width)
-    let note_margin = 13.0;
+    // ノートサイズ計算（4隅同じパディング）
+    let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(5);
+    let text_width = max_line_len as f64 * NOTE_CHAR_WIDTH;
+    let content_width = (NOTE_PADDING * 2.0 + text_width).max(NOTE_MIN_WIDTH);
+    let note_height = NOTE_PADDING * 2.0 + lines.len() as f64 * line_height;
 
     let (x, note_width, text_anchor) = match position {
         NotePosition::Left => {
             let px = state.get_x(&participants[0]);
-            let w = content_width.min(300.0);
-            // Note right edge at px - margin, so left edge at px - margin - w
-            let x = (px - note_margin - w).max(state.config.padding);
-            (x, w, "start")
+            // ノート右端 = px - NOTE_MARGIN
+            let x = (px - NOTE_MARGIN - content_width).max(state.config.padding);
+            (x, content_width, "start")
         }
         NotePosition::Right => {
             let px = state.get_x(&participants[0]);
-            let w = content_width.min(300.0);
-            // Note left edge at px + margin
-            (px + note_margin, w, "start")
+            // ノート左端 = px + NOTE_MARGIN
+            (px + NOTE_MARGIN, content_width, "start")
         }
         NotePosition::Over => {
-            // WSD: fixed overhang from lifeline (not dependent on participant width)
-            let note_overhang = 13.0;
-
             if participants.len() == 1 {
                 let px = state.get_x(&participants[0]);
-                // Note width = content width, centered on lifeline
-                let w = content_width;
-                let x = (px - w / 2.0).max(state.config.padding);
-                (x, w, "middle")
+                // ライフライン中心に配置
+                let x = (px - content_width / 2.0).max(state.config.padding);
+                (x, content_width, "middle")
             } else {
-                // Span across multiple participants
-                // WSD: note extends from (x1 - overhang) to (x2 + overhang)
+                // 複数参加者にまたがる
                 let x1 = state.get_x(&participants[0]);
                 let x2 = state.get_x(participants.last().unwrap());
-                let span_width = (x2 - x1).abs() + note_overhang * 2.0;
+                let span_width = (x2 - x1).abs() + NOTE_MARGIN * 2.0;
                 let w = span_width.max(content_width);
-                let x = (x1 - note_overhang).max(state.config.padding);
-                (x, w, "middle") // Center text in multi-participant note
+                let x = (x1 - NOTE_MARGIN).max(state.config.padding);
+                (x, w, "middle")
             }
         }
     };
 
-    let y = state.current_y + NOTE_Y_OFFSET;
-    let fold_size = 8.0; // Size of the dog-ear fold
+    let y = state.current_y;
+    let fold_size = NOTE_FOLD_SIZE;
 
     // Note background with dog-ear (folded corner) effect
     // Path: start at top-left, go right (leaving space for fold), diagonal fold, down, left, up
@@ -2692,32 +2803,28 @@ fn render_note(
     )
     .unwrap();
 
-    // Note text - use left_padding (6px) for horizontal text position
+    // テキスト位置（4隅同じパディング使用）
     let text_x = match text_anchor {
         "middle" => x + note_width / 2.0,
-        "start" => x + left_padding,
-        _ => x + note_width - left_padding,
+        _ => x + NOTE_PADDING,
     };
+    let text_anchor_attr = if *position == NotePosition::Over { "middle" } else { "start" };
 
     for (i, line) in lines.iter().enumerate() {
-        let text_y = y + padding + (i as f64 + 0.8) * line_height;
+        let text_y = y + NOTE_PADDING + (i as f64 + 0.8) * line_height;
         writeln!(
             svg,
             r#"<text x="{x}" y="{y}" class="note-text" text-anchor="{anchor}">{t}</text>"#,
             x = text_x,
             y = text_y,
-            anchor = if *position == NotePosition::Over {
-                "middle"
-            } else {
-                "start"
-            },
+            anchor = text_anchor_attr,
             t = escape_xml(line)
         )
         .unwrap();
     }
 
-    // Add note height plus margin
-    state.current_y += note_height.max(state.config.row_height) + NOTE_MARGIN;
+    // 要素間余白を追加
+    state.current_y += note_height.max(state.config.row_height) + ROW_SPACING;
 }
 
 /// Render a state box (rounded rectangle)
@@ -3002,7 +3109,7 @@ fn render_block(
             }
         }
         let gap = if parallel_needs_gap(items) {
-            PARALLEL_BLOCK_GAP
+            BLOCK_GAP
         } else {
             0.0
         };
@@ -3041,16 +3148,20 @@ fn render_block(
     // Render else items if present
     if let Some(else_items) = else_items {
         state.push_else_return_pending();
-        state.current_y += block_else_spacing(&state.config, depth);
+        // else線の前にパディング（collect_block_backgroundsと同じ）
+        state.current_y += block_else_before(&state.config, depth);
+        // else線の後にパディング
+        state.current_y += block_else_after(&state.config, depth);
         render_items(svg, state, else_items, depth + 1);
         state.pop_else_return_pending();
     }
 
-    let end_y =
-        state.current_y - state.config.row_height + block_footer_padding(&state.config, depth);
+    // ブロック下端 = 現在のY位置 + フッターパディング
+    // （メッセージがブロック外にはみ出ないように）
+    let end_y = state.current_y + block_footer_padding(&state.config, depth);
 
     // Set current_y to end of block + margin
-    state.current_y = end_y + state.config.row_height * 1.0;
+    state.current_y = end_y + state.config.row_height;
 
     // Block frame, labels, and else separators are rendered later by render_block_labels()
     // which is called after activations are drawn, so labels appear on top
