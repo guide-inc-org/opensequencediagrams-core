@@ -171,6 +171,7 @@ pub fn parse(input: &str) -> Result<Diagram, ParseError> {
                             label: String::new(),
                             items: nested_items,
                             else_items: None,
+                            else_label: None,
                         });
                     } else if let Ok((_, item)) = parse_line(block_line) {
                         block_items.push(item);
@@ -184,6 +185,7 @@ pub fn parse(input: &str) -> Result<Diagram, ParseError> {
                 label: String::new(),
                 items: block_items,
                 else_items: None,
+                else_label: None,
             });
             i += 1;
             continue;
@@ -717,6 +719,7 @@ fn parse_block_start(input: &str) -> IResult<&str, Item> {
             label,
             items: vec![],
             else_items: None,
+            else_label: None,
         },
     ))
 }
@@ -735,6 +738,7 @@ fn parse_else(input: &str) -> IResult<&str, Item> {
             label: format!("__ELSE__{}", label),
             items: vec![],
             else_items: None,
+            else_label: None,
         },
     ))
 }
@@ -757,6 +761,7 @@ fn parse_end(input: &str) -> IResult<&str, Item> {
             label: "__END__".to_string(),
             items: vec![],
             else_items: None,
+            else_label: None,
         },
     ))
 }
@@ -764,18 +769,20 @@ fn parse_end(input: &str) -> IResult<&str, Item> {
 /// Build block structure from flat list of items
 fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
     let mut result = Vec::new();
-    let mut stack: Vec<(BlockKind, String, Vec<Item>, Option<Vec<Item>>, bool)> = Vec::new();
+    // Stack: (kind, label, items, else_items, in_else_branch, else_label)
+    let mut stack: Vec<(BlockKind, String, Vec<Item>, Option<Vec<Item>>, bool, Option<String>)> = Vec::new();
 
     for item in items {
         match &item {
             Item::Block { label, .. } if label == "__END__" => {
                 // End of block
-                if let Some((kind, label, items, else_items, _)) = stack.pop() {
+                if let Some((kind, label, items, else_items, _, else_label)) = stack.pop() {
                     let block = Item::Block {
                         kind,
                         label,
                         items,
                         else_items,
+                        else_label,
                     };
                     if let Some(parent) = stack.last_mut() {
                         if parent.4 {
@@ -790,10 +797,16 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
                 }
             }
             Item::Block { label, .. } if label.starts_with("__ELSE__") => {
-                // Else marker
+                // Else marker - extract the else label
+                let else_label_text = label.strip_prefix("__ELSE__").unwrap_or("").to_string();
                 if let Some(parent) = stack.last_mut() {
                     parent.4 = true; // Switch to else branch
                     parent.3 = Some(Vec::new());
+                    parent.5 = if else_label_text.is_empty() {
+                        None
+                    } else {
+                        Some(else_label_text)
+                    };
                 }
             }
             Item::Block {
@@ -801,6 +814,7 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
                 label,
                 items,
                 else_items,
+                ..
             } if !label.starts_with("__") => {
                 // Check if this is a completed block (parallel/serial with items already)
                 if matches!(kind, BlockKind::Parallel | BlockKind::Serial) || !items.is_empty() {
@@ -810,6 +824,7 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
                         label: label.clone(),
                         items: items.clone(),
                         else_items: else_items.clone(),
+                        else_label: None,
                     };
                     if let Some(parent) = stack.last_mut() {
                         if parent.4 {
@@ -822,7 +837,7 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
                     }
                 } else {
                     // Block start marker
-                    stack.push((*kind, label.clone(), Vec::new(), None, false));
+                    stack.push((*kind, label.clone(), Vec::new(), None, false, None));
                 }
             }
             _ => {

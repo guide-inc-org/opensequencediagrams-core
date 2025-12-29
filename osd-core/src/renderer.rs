@@ -88,6 +88,7 @@ struct BlockLabel {
     kind: String,
     label: String,
     else_y: Option<f64>,
+    else_label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +150,6 @@ fn group_spacing(config: &Config) -> f64 {
 // ============================================
 const MESSAGE_TEXT_ABOVE_ARROW: f64 = 6.0;       // Text is rendered 6px above arrow
 const DELAY_UNIT: f64 = 18.0;                    // Pixels per delay unit
-const MESSAGE_MULTILINE_HEIGHT_MULT: f64 = 0.375; // Line height multiplier for multiline messages
 
 // ============================================
 // Block (alt, opt, loop, etc.)
@@ -198,11 +198,10 @@ fn block_else_before(_config: &Config, _depth: usize) -> f64 {
 }
 
 fn block_else_after(config: &Config, _depth: usize) -> f64 {
-    config.row_height
-}
-
-fn message_spacing_line_height(config: &Config) -> f64 {
-    config.row_height * MESSAGE_MULTILINE_HEIGHT_MULT
+    // Space after else line to match alt header spacing
+    // Else label text is rendered at else_y + 16 (label_text_offset)
+    // Need space for label text height + group spacing + message text offset
+    16.0 + group_spacing(config) + MESSAGE_TEXT_ABOVE_ARROW
 }
 
 fn self_message_spacing(config: &Config, lines: usize) -> f64 {
@@ -266,9 +265,11 @@ fn ref_line_height(config: &Config) -> f64 {
 
 /// Calculate Y advancement for a regular (non-self) message
 fn regular_message_y_advance(config: &Config, line_count: usize, delay_offset: f64) -> f64 {
-    let spacing_line_height = message_spacing_line_height(config);
+    // Use actual line_height (font_size + 4) to match text rendering
+    let line_height = config.font_size + 4.0;
     let extra_height = if line_count > 1 {
-        (line_count - 1) as f64 * spacing_line_height
+        // Extra lines + MESSAGE_TEXT_ABOVE_ARROW offset (text is rendered above arrow)
+        (line_count - 1) as f64 * line_height + MESSAGE_TEXT_ABOVE_ARROW
     } else {
         0.0
     };
@@ -1086,6 +1087,7 @@ impl RenderState {
         kind: &str,
         label: &str,
         else_y: Option<f64>,
+        else_label: Option<String>,
     ) {
         self.block_labels.push(BlockLabel {
             x1,
@@ -1095,6 +1097,7 @@ impl RenderState {
             kind: kind.to_string(),
             label: label.to_string(),
             else_y,
+            else_label,
         });
     }
 }
@@ -1364,6 +1367,7 @@ fn collect_block_backgrounds(
                 label,
                 items,
                 else_items,
+                else_label,
             } => {
                 if block_is_parallel(kind) {
                     state.push_parallel();
@@ -1477,6 +1481,7 @@ fn collect_block_backgrounds(
                     kind.as_str(),
                     label,
                     else_y,
+                    else_label.clone(),
                 );
             }
             _ => {}
@@ -1576,8 +1581,9 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
             .unwrap();
         }
 
-        // Else separator (dashed line only, no [else] text per WSD style)
+        // Else separator (dashed line + else label text)
         if let Some(else_y) = bl.else_y {
+            // Draw dashed line
             writeln!(
                 svg,
                 r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{c}" stroke-dasharray="5,3"/>"##,
@@ -1587,6 +1593,22 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
                 c = theme.block_stroke
             )
             .unwrap();
+
+            // Draw else label text at same X position as alt condition label
+            if let Some(else_label_text) = &bl.else_label {
+                let condition_text = format!("[{}]", else_label_text);
+                let text_x = x1 + label_width + 8.0; // Same X as alt's [Success case]
+                let text_y = else_y + label_text_offset; // Below the dashed line
+
+                writeln!(
+                    svg,
+                    r#"<text x="{x}" y="{y}" class="block-label">{label}</text>"#,
+                    x = text_x,
+                    y = text_y,
+                    label = escape_xml(&condition_text)
+                )
+                .unwrap();
+            }
         }
     }
 }
@@ -2317,8 +2339,9 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item], depth
                 label,
                 items,
                 else_items,
+                else_label,
             } => {
-                render_block(svg, state, kind, label, items, else_items.as_deref(), depth);
+                render_block(svg, state, kind, label, items, else_items.as_deref(), else_label.as_deref(), depth);
             }
             Item::Activate { participant } => {
                 let y = state.current_y;
@@ -2447,8 +2470,9 @@ fn render_message(
     let lines: Vec<&str> = display_text.split("\\n").collect();
     let line_height = state.config.font_size + 4.0;
     let extra_height = if !is_self && lines.len() > 1 {
-        let spacing_line_height = message_spacing_line_height(&state.config);
-        (lines.len() - 1) as f64 * spacing_line_height
+        // Use actual line_height (not spacing_line_height) to match text rendering
+        // Extra lines + MESSAGE_TEXT_ABOVE_ARROW offset (text is rendered above arrow)
+        (lines.len() - 1) as f64 * line_height + MESSAGE_TEXT_ABOVE_ARROW
     } else {
         0.0
     };
@@ -2590,7 +2614,10 @@ fn render_message(
             let label_x_min = text_x - max_width / 2.0;
             let label_x_max = text_x + max_width / 2.0;
             let step = line_height * MESSAGE_LABEL_COLLISION_STEP_RATIO;
-            state.reserve_message_label(label_x_min, label_x_max, label_y_min, label_y_max, step)
+            let raw_offset = state.reserve_message_label(label_x_min, label_x_max, label_y_min, label_y_max, step);
+            // Limit offset to prevent text from going below the arrow
+            let max_offset = y - MESSAGE_TEXT_ABOVE_ARROW - bottom_line_y;
+            raw_offset.min(max_offset.max(0.0))
         } else {
             0.0
         };
@@ -3039,6 +3066,7 @@ fn render_block(
     _label: &str,
     items: &[Item],
     else_items: Option<&[Item]>,
+    _else_label: Option<&str>,
     depth: usize,
 ) {
     if block_is_parallel(kind) {

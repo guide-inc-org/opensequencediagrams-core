@@ -147,6 +147,7 @@ pub enum Item {
         label: String,
         items: Vec<Item>,
         else_items: Option<Vec<Item>>,
+        else_label: Option<String>,
     },
     /// Autonumber control
     Autonumber { enabled: bool, start: Option<u32> },
