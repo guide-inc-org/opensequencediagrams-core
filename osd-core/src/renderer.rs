@@ -507,7 +507,7 @@ fn calculate_right_margin(
     }
 }
 
-/// Calculate required left margin based on left-side notes on the leftmost participant
+/// Calculate required left margin based on left-side notes and self-message text
 fn calculate_left_margin(
     participants: &[Participant],
     items: &[Item],
@@ -518,11 +518,13 @@ fn calculate_left_margin(
         None => return config.padding,
     };
     let mut max_left_note_width: f64 = 0.0;
+    let mut max_self_msg_text_width: f64 = 0.0;
 
-    fn process_items_for_left_notes(
+    fn process_items_for_left_margin(
         items: &[Item],
         leftmost_id: &str,
-        max_width: &mut f64,
+        max_note_width: &mut f64,
+        max_self_msg_width: &mut f64,
         config: &Config,
     ) {
         for item in items {
@@ -535,17 +537,26 @@ fn calculate_left_margin(
                     // Only consider notes on the leftmost participant
                     if participants.first().map(|s| s.as_str()) == Some(leftmost_id) {
                         let note_width = calculate_note_width(text, config);
-                        if note_width > *max_width {
-                            *max_width = note_width;
+                        if note_width > *max_note_width {
+                            *max_note_width = note_width;
+                        }
+                    }
+                }
+                Item::Message { from, to, text, .. } => {
+                    // Self-message text extends to the left
+                    if from == to && from == leftmost_id {
+                        let text_width = estimate_message_width(text, config.font_size);
+                        if text_width > *max_self_msg_width {
+                            *max_self_msg_width = text_width;
                         }
                     }
                 }
                 Item::Block {
                     items, else_sections, ..
                 } => {
-                    process_items_for_left_notes(items, leftmost_id, max_width, config);
+                    process_items_for_left_margin(items, leftmost_id, max_note_width, max_self_msg_width, config);
                     for section in else_sections {
-                        process_items_for_left_notes(&section.items, leftmost_id, max_width, config);
+                        process_items_for_left_margin(&section.items, leftmost_id, max_note_width, max_self_msg_width, config);
                     }
                 }
                 _ => {}
@@ -553,14 +564,25 @@ fn calculate_left_margin(
         }
     }
 
-    process_items_for_left_notes(items, &leftmost_id, &mut max_left_note_width, config);
+    process_items_for_left_margin(items, &leftmost_id, &mut max_left_note_width, &mut max_self_msg_text_width, config);
 
-    // left_margin needs to accommodate: note_width + NOTE_MARGIN
-    if max_left_note_width > 0.0 {
-        (max_left_note_width + NOTE_MARGIN).max(config.padding)
+    // left_margin needs to accommodate both note width and self-message text width
+    let note_margin = if max_left_note_width > 0.0 {
+        max_left_note_width + NOTE_MARGIN
     } else {
-        config.padding
-    }
+        0.0
+    };
+    // Self-message text: text is right-aligned at (participant_x - 5), extending left
+    // text_left_edge = left_margin + participant_width/2 - 5 - text_width
+    //                = left_margin + 46 - 5 - text_width = left_margin + 41 - text_width
+    // For text_left_edge >= padding: left_margin >= padding + text_width - 41
+    let self_msg_margin = if max_self_msg_text_width > 0.0 {
+        (max_self_msg_text_width - 41.0 + config.padding).max(0.0)
+    } else {
+        0.0
+    };
+
+    note_margin.max(self_msg_margin).max(config.padding)
 }
 
 /// Calculate dynamic gaps between participants based on message text lengths
@@ -2580,14 +2602,13 @@ fn render_message(
         }
 
         // Text - multiline support
-        // Self-messages don't need collision detection - they're positioned to the right
-        // of the loop and won't collide with regular centered messages
-        let text_x = x1 + loop_width + 5.0;
+        // Self-message text is positioned to the LEFT of the loop with right-alignment
+        let text_x = x1 - 5.0;
         for (i, line) in lines.iter().enumerate() {
             let line_y = y + 4.0 + (i as f64 + 0.5) * line_height;
             writeln!(
                 svg,
-                r#"  <text x="{x}" y="{y}" class="message-text">{t}</text>"#,
+                r#"  <text x="{x}" y="{y}" class="message-text" text-anchor="end">{t}</text>"#,
                 x = text_x,
                 y = line_y,
                 t = escape_xml(line)
@@ -2897,7 +2918,9 @@ fn render_state(svg: &mut String, state: &mut RenderState, participants: &[Strin
         .unwrap();
     }
 
-    state.current_y = y + box_height + state.config.row_height;
+    // Advance Y using the same calculation as state_y_advance for consistency
+    let line_count = lines.len();
+    state.current_y += state_y_advance(&state.config, line_count);
 }
 
 /// Render a ref box (hexagon-like shape)
@@ -3073,7 +3096,9 @@ fn render_ref(
         }
     }
 
-    state.current_y = y + box_height + state.config.row_height;
+    // Advance Y using the same calculation as ref_y_advance for consistency
+    let line_count = lines.len();
+    state.current_y += ref_y_advance(&state.config, line_count);
 }
 
 /// Render a description (extended text explanation)
