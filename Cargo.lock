@@ -43,7 +43,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "osd-core"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "nom",
  "pretty_assertions",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "osd-wasm"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "osd-core",
  "wasm-bindgen",

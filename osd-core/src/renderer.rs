@@ -87,8 +87,8 @@ struct BlockLabel {
     x2: f64,
     kind: String,
     label: String,
-    else_y: Option<f64>,
-    else_label: Option<String>,
+    /// Y coordinates and labels for each else section
+    else_sections: Vec<(f64, Option<String>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -485,11 +485,11 @@ fn calculate_right_margin(
                     }
                 }
                 Item::Block {
-                    items, else_items, ..
+                    items, else_sections, ..
                 } => {
                     process_items_for_right_notes(items, rightmost_id, max_width, config);
-                    if let Some(else_items) = else_items {
-                        process_items_for_right_notes(else_items, rightmost_id, max_width, config);
+                    for section in else_sections {
+                        process_items_for_right_notes(&section.items, rightmost_id, max_width, config);
                     }
                 }
                 _ => {}
@@ -541,11 +541,11 @@ fn calculate_left_margin(
                     }
                 }
                 Item::Block {
-                    items, else_items, ..
+                    items, else_sections, ..
                 } => {
                     process_items_for_left_notes(items, leftmost_id, max_width, config);
-                    if let Some(else_items) = else_items {
-                        process_items_for_left_notes(else_items, leftmost_id, max_width, config);
+                    for section in else_sections {
+                        process_items_for_left_notes(&section.items, leftmost_id, max_width, config);
                     }
                 }
                 _ => {}
@@ -668,11 +668,11 @@ fn calculate_participant_gaps(
                     }
                 }
                 Item::Block {
-                    items, else_items, ..
+                    items, else_sections, ..
                 } => {
                     process_items(items, participant_index, gaps, config);
-                    if let Some(else_items) = else_items {
-                        process_items(else_items, participant_index, gaps, config);
+                    for section in else_sections {
+                        process_items(&section.items, participant_index, gaps, config);
                     }
                 }
                 _ => {}
@@ -1098,8 +1098,7 @@ impl RenderState {
         x2: f64,
         kind: &str,
         label: &str,
-        else_y: Option<f64>,
-        else_label: Option<String>,
+        else_sections: Vec<(f64, Option<String>)>,
     ) {
         self.block_labels.push(BlockLabel {
             x1,
@@ -1108,8 +1107,7 @@ impl RenderState {
             x2,
             kind: kind.to_string(),
             label: label.to_string(),
-            else_y,
-            else_label,
+            else_sections,
         });
     }
 }
@@ -1183,7 +1181,7 @@ fn find_involved_participants(items: &[Item], state: &RenderState) -> Option<(f6
                     }
                 }
                 Item::Block {
-                    items, else_items, ..
+                    items, else_sections, ..
                 } => {
                     process_items(
                         items,
@@ -1193,9 +1191,9 @@ fn find_involved_participants(items: &[Item], state: &RenderState) -> Option<(f6
                         includes_leftmost,
                         leftmost_id,
                     );
-                    if let Some(else_items) = else_items {
+                    for section in else_sections {
                         process_items(
-                            else_items,
+                            &section.items,
                             state,
                             min_left,
                             max_right,
@@ -1239,16 +1237,15 @@ fn find_involved_participants(items: &[Item], state: &RenderState) -> Option<(f6
 /// Calculate block x boundaries based on involved participants and label length
 fn calculate_block_bounds_with_label(
     items: &[Item],
-    else_items: Option<&[Item]>,
+    else_sections: &[crate::ast::ElseSection],
     label: &str,
-    else_label: Option<&str>,
     kind: &str,
     depth: usize,
     state: &RenderState,
 ) -> (f64, f64) {
     let mut all_items: Vec<&Item> = items.iter().collect();
-    if let Some(else_items) = else_items {
-        all_items.extend(else_items.iter());
+    for section in else_sections {
+        all_items.extend(section.items.iter());
     }
 
     // Convert Vec<&Item> to slice for find_involved_participants
@@ -1279,22 +1276,22 @@ fn calculate_block_bounds_with_label(
         base_width + label_padding_x * 2.0
     };
 
-    // Calculate else label width (else label starts at same X as condition label)
-    let else_label_width = if let Some(el) = else_label {
-        if !el.is_empty() {
-            let else_text = format!("[{}]", el);
-            let base_width =
-                (estimate_text_width(&else_text, label_font_size) - TEXT_WIDTH_PADDING).max(0.0);
-            base_width + label_padding_x * 2.0
-        } else {
-            0.0
+    // Calculate max else label width (else labels start at same X as condition label)
+    let mut max_else_label_width = 0.0f64;
+    for section in else_sections {
+        if let Some(el) = &section.label {
+            if !el.is_empty() {
+                let else_text = format!("[{}]", el);
+                let base_width =
+                    (estimate_text_width(&else_text, label_font_size) - TEXT_WIDTH_PADDING).max(0.0);
+                let width = base_width + label_padding_x * 2.0;
+                max_else_label_width = max_else_label_width.max(width);
+            }
         }
-    } else {
-        0.0
-    };
+    }
 
-    // Use the wider of the two labels
-    let max_label_content_width = condition_width.max(else_label_width);
+    // Use the wider of all labels
+    let max_label_content_width = condition_width.max(max_else_label_width);
     let min_label_width = pentagon_width + 8.0 + max_label_content_width + 20.0; // Extra right margin
 
     // Ensure block is wide enough for the label
@@ -1396,8 +1393,7 @@ fn collect_block_backgrounds(
                 kind,
                 label,
                 items,
-                else_items,
-                else_label,
+                else_sections,
             } => {
                 if block_is_parallel(kind) {
                     state.push_parallel();
@@ -1431,10 +1427,10 @@ fn collect_block_backgrounds(
                 if matches!(kind, BlockKind::Serial) {
                     state.push_serial_first_row_pending();
                     collect_block_backgrounds(state, items, depth, active_activation_count);
-                    if let Some(else_items) = else_items {
+                    for section in else_sections {
                         collect_block_backgrounds(
                             state,
-                            else_items,
+                            &section.items,
                             depth,
                             active_activation_count,
                         );
@@ -1445,10 +1441,10 @@ fn collect_block_backgrounds(
 
                 if !block_has_frame(kind) {
                     collect_block_backgrounds(state, items, depth, active_activation_count);
-                    if let Some(else_items) = else_items {
+                    for section in else_sections {
                         collect_block_backgrounds(
                             state,
-                            else_items,
+                            &section.items,
                             depth,
                             active_activation_count,
                         );
@@ -1463,9 +1459,8 @@ fn collect_block_backgrounds(
                 // Calculate bounds based on involved participants and label width
                 let (x1, x2) = calculate_block_bounds_with_label(
                     items,
-                    else_items.as_deref(),
+                    else_sections,
                     label,
-                    else_label.as_deref(),
                     kind.as_str(),
                     depth,
                     state,
@@ -1474,21 +1469,20 @@ fn collect_block_backgrounds(
                 state.current_y += block_header_space(&state.config, depth);
                 collect_block_backgrounds(state, items, depth + 1, active_activation_count);
 
-                // Add padding before else line (small)
-                let else_y = if else_items.is_some() {
+                // Process each else section
+                let mut else_section_info: Vec<(f64, Option<String>)> = Vec::new();
+                for section in else_sections {
+                    // Add padding before else line
                     state.current_y += block_else_before(&state.config, depth);
-                    Some(state.current_y)
-                } else {
-                    None
-                };
+                    let else_y = state.current_y;
+                    else_section_info.push((else_y, section.label.clone()));
 
-                if let Some(else_items) = else_items {
                     state.push_else_return_pending();
-                    // Add padding after else line (sufficient gap)
+                    // Add padding after else line
                     state.current_y += block_else_after(&state.config, depth);
                     collect_block_backgrounds(
                         state,
-                        else_items,
+                        &section.items,
                         depth + 1,
                         active_activation_count,
                     );
@@ -1511,8 +1505,7 @@ fn collect_block_backgrounds(
                     x2,
                     kind.as_str(),
                     label,
-                    else_y,
-                    else_label.clone(),
+                    else_section_info,
                 );
             }
             _ => {}
@@ -1612,8 +1605,8 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
             .unwrap();
         }
 
-        // Else separator (dashed line + else label text)
-        if let Some(else_y) = bl.else_y {
+        // Else separators (dashed line + else label text for each else section)
+        for (else_y, else_label_opt) in &bl.else_sections {
             // Draw dashed line
             writeln!(
                 svg,
@@ -1626,7 +1619,7 @@ fn render_block_labels(svg: &mut String, state: &RenderState) {
             .unwrap();
 
             // Draw else label text at same X position as alt condition label
-            if let Some(else_label_text) = &bl.else_label {
+            if let Some(else_label_text) = else_label_opt {
                 let condition_text = format!("[{}]", else_label_text);
                 let text_x = x1 + label_width + 8.0; // Same X as alt's [Success case]
                 let text_y = else_y + label_text_offset; // Below the dashed line
@@ -1996,7 +1989,7 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                 Item::Block {
                     kind,
                     items,
-                    else_items,
+                    else_sections,
                     ..
                 } => {
                     if block_is_parallel(kind) {
@@ -2042,9 +2035,9 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                             active_activation_count,
                             parallel_depth,
                         );
-                        if let Some(else_items) = else_items {
+                        for else_section in else_sections {
                             height += inner(
-                                else_items,
+                                &else_section.items,
                                 config,
                                 depth,
                                 else_pending,
@@ -2064,9 +2057,9 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                             active_activation_count,
                             parallel_depth,
                         );
-                        if let Some(else_items) = else_items {
+                        for else_section in else_sections {
                             height += inner(
-                                else_items,
+                                &else_section.items,
                                 config,
                                 depth,
                                 else_pending,
@@ -2086,12 +2079,12 @@ fn calculate_height(items: &[Item], config: &Config, depth: usize) -> f64 {
                             active_activation_count,
                             parallel_depth,
                         );
-                        if let Some(else_items) = else_items {
+                        for else_section in else_sections {
                             else_pending.push(true);
                             // Padding before and after else line
                             height += block_else_before(config, depth) + block_else_after(config, depth);
                             height += inner(
-                                else_items,
+                                &else_section.items,
                                 config,
                                 depth + 1,
                                 else_pending,
@@ -2371,10 +2364,9 @@ fn render_items(svg: &mut String, state: &mut RenderState, items: &[Item], depth
                 kind,
                 label,
                 items,
-                else_items,
-                else_label,
+                else_sections,
             } => {
-                render_block(svg, state, kind, label, items, else_items.as_deref(), else_label.as_deref(), depth);
+                render_block(svg, state, kind, label, items, else_sections, depth);
             }
             Item::Activate { participant } => {
                 let y = state.current_y;
@@ -3098,8 +3090,7 @@ fn render_block(
     kind: &BlockKind,
     _label: &str,
     items: &[Item],
-    else_items: Option<&[Item]>,
-    _else_label: Option<&str>,
+    else_sections: &[crate::ast::ElseSection],
     depth: usize,
 ) {
     if block_is_parallel(kind) {
@@ -3126,8 +3117,8 @@ fn render_block(
     if matches!(kind, BlockKind::Serial) {
         state.push_serial_first_row_pending();
         render_items(svg, state, items, depth);
-        if let Some(else_items) = else_items {
-            render_items(svg, state, else_items, depth);
+        for else_section in else_sections {
+            render_items(svg, state, &else_section.items, depth);
         }
         state.pop_serial_first_row_pending();
         return;
@@ -3135,8 +3126,8 @@ fn render_block(
 
     if !block_has_frame(kind) {
         render_items(svg, state, items, depth);
-        if let Some(else_items) = else_items {
-            render_items(svg, state, else_items, depth);
+        for else_section in else_sections {
+            render_items(svg, state, &else_section.items, depth);
         }
         return;
     }
@@ -3150,14 +3141,14 @@ fn render_block(
     // Render items
     render_items(svg, state, items, depth + 1);
 
-    // Render else items if present
-    if let Some(else_items) = else_items {
+    // Render else sections if present
+    for else_section in else_sections {
         state.push_else_return_pending();
         // Padding before else line (same as collect_block_backgrounds)
         state.current_y += block_else_before(&state.config, depth);
         // Padding after else line
         state.current_y += block_else_after(&state.config, depth);
-        render_items(svg, state, else_items, depth + 1);
+        render_items(svg, state, &else_section.items, depth + 1);
         state.pop_else_return_pending();
     }
 

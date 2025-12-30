@@ -63,11 +63,11 @@ impl Diagram {
                         add_participant(to, None, ParticipantKind::Participant, participants, seen);
                     }
                     Item::Block {
-                        items, else_items, ..
+                        items, else_sections, ..
                     } => {
                         collect_from_items(items, participants, seen);
-                        if let Some(else_items) = else_items {
-                            collect_from_items(else_items, participants, seen);
+                        for else_section in else_sections {
+                            collect_from_items(&else_section.items, participants, seen);
                         }
                     }
                     _ => {}
@@ -146,8 +146,8 @@ pub enum Item {
         kind: BlockKind,
         label: String,
         items: Vec<Item>,
-        else_items: Option<Vec<Item>>,
-        else_label: Option<String>,
+        /// Multiple else sections (for alt blocks with multiple else branches)
+        else_sections: Vec<ElseSection>,
     },
     /// Autonumber control
     Autonumber { enabled: bool, start: Option<u32> },
@@ -284,4 +284,13 @@ impl BlockKind {
             BlockKind::Serial => "serial",
         }
     }
+}
+
+/// An else section within a block (for alt/opt with multiple else branches)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElseSection {
+    /// Optional label for this else section
+    pub label: Option<String>,
+    /// Items in this else section
+    pub items: Vec<Item>,
 }

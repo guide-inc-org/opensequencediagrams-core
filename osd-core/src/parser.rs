@@ -170,8 +170,7 @@ pub fn parse(input: &str) -> Result<Diagram, ParseError> {
                             kind: nested_kind,
                             label: String::new(),
                             items: nested_items,
-                            else_items: None,
-                            else_label: None,
+                            else_sections: vec![],
                         });
                     } else if let Ok((_, item)) = parse_line(block_line) {
                         block_items.push(item);
@@ -184,8 +183,7 @@ pub fn parse(input: &str) -> Result<Diagram, ParseError> {
                 kind,
                 label: String::new(),
                 items: block_items,
-                else_items: None,
-                else_label: None,
+                else_sections: vec![],
             });
             i += 1;
             continue;
@@ -718,8 +716,7 @@ fn parse_block_start(input: &str) -> IResult<&str, Item> {
             kind,
             label,
             items: vec![],
-            else_items: None,
-            else_label: None,
+            else_sections: vec![],
         },
     ))
 }
@@ -737,8 +734,7 @@ fn parse_else(input: &str) -> IResult<&str, Item> {
             kind: BlockKind::Alt, // marker
             label: format!("__ELSE__{}", label),
             items: vec![],
-            else_items: None,
-            else_label: None,
+            else_sections: vec![],
         },
     ))
 }
@@ -760,36 +756,51 @@ fn parse_end(input: &str) -> IResult<&str, Item> {
             kind: BlockKind::Alt, // marker
             label: "__END__".to_string(),
             items: vec![],
-            else_items: None,
-            else_label: None,
+            else_sections: vec![],
         },
     ))
 }
 
 /// Build block structure from flat list of items
 fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
+    use crate::ast::ElseSection;
+
     let mut result = Vec::new();
-    // Stack: (kind, label, items, else_items, in_else_branch, else_label)
-    let mut stack: Vec<(BlockKind, String, Vec<Item>, Option<Vec<Item>>, bool, Option<String>)> = Vec::new();
+    // Stack entry: (kind, label, items, else_sections, current_else_items, current_else_label, in_else_branch)
+    struct StackEntry {
+        kind: BlockKind,
+        label: String,
+        items: Vec<Item>,
+        else_sections: Vec<ElseSection>,
+        current_else_items: Vec<Item>,
+        current_else_label: Option<String>,
+        in_else_branch: bool,
+    }
+    let mut stack: Vec<StackEntry> = Vec::new();
 
     for item in items {
         match &item {
             Item::Block { label, .. } if label == "__END__" => {
                 // End of block
-                if let Some((kind, label, items, else_items, _, else_label)) = stack.pop() {
+                if let Some(mut entry) = stack.pop() {
+                    // If we were in an else branch, finalize it
+                    if entry.in_else_branch && !entry.current_else_items.is_empty() {
+                        entry.else_sections.push(ElseSection {
+                            label: entry.current_else_label.take(),
+                            items: std::mem::take(&mut entry.current_else_items),
+                        });
+                    }
                     let block = Item::Block {
-                        kind,
-                        label,
-                        items,
-                        else_items,
-                        else_label,
+                        kind: entry.kind,
+                        label: entry.label,
+                        items: entry.items,
+                        else_sections: entry.else_sections,
                     };
                     if let Some(parent) = stack.last_mut() {
-                        if parent.4 {
-                            // In else branch
-                            parent.3.get_or_insert_with(Vec::new).push(block);
+                        if parent.in_else_branch {
+                            parent.current_else_items.push(block);
                         } else {
-                            parent.2.push(block);
+                            parent.items.push(block);
                         }
                     } else {
                         result.push(block);
@@ -799,10 +810,18 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
             Item::Block { label, .. } if label.starts_with("__ELSE__") => {
                 // Else marker - extract the else label
                 let else_label_text = label.strip_prefix("__ELSE__").unwrap_or("").to_string();
-                if let Some(parent) = stack.last_mut() {
-                    parent.4 = true; // Switch to else branch
-                    parent.3 = Some(Vec::new());
-                    parent.5 = if else_label_text.is_empty() {
+                if let Some(entry) = stack.last_mut() {
+                    // If we were already in an else branch, save the current one
+                    if entry.in_else_branch && !entry.current_else_items.is_empty() {
+                        entry.else_sections.push(ElseSection {
+                            label: entry.current_else_label.take(),
+                            items: std::mem::take(&mut entry.current_else_items),
+                        });
+                    }
+                    // Start new else branch
+                    entry.in_else_branch = true;
+                    entry.current_else_items = Vec::new();
+                    entry.current_else_label = if else_label_text.is_empty() {
                         None
                     } else {
                         Some(else_label_text)
@@ -813,7 +832,7 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
                 kind,
                 label,
                 items,
-                else_items,
+                else_sections,
                 ..
             } if !label.starts_with("__") => {
                 // Check if this is a completed block (parallel/serial with items already)
@@ -823,31 +842,37 @@ fn build_blocks(items: Vec<Item>) -> Result<Vec<Item>, ParseError> {
                         kind: *kind,
                         label: label.clone(),
                         items: items.clone(),
-                        else_items: else_items.clone(),
-                        else_label: None,
+                        else_sections: else_sections.clone(),
                     };
                     if let Some(parent) = stack.last_mut() {
-                        if parent.4 {
-                            parent.3.get_or_insert_with(Vec::new).push(block);
+                        if parent.in_else_branch {
+                            parent.current_else_items.push(block);
                         } else {
-                            parent.2.push(block);
+                            parent.items.push(block);
                         }
                     } else {
                         result.push(block);
                     }
                 } else {
                     // Block start marker
-                    stack.push((*kind, label.clone(), Vec::new(), None, false, None));
+                    stack.push(StackEntry {
+                        kind: *kind,
+                        label: label.clone(),
+                        items: Vec::new(),
+                        else_sections: Vec::new(),
+                        current_else_items: Vec::new(),
+                        current_else_label: None,
+                        in_else_branch: false,
+                    });
                 }
             }
             _ => {
                 // Regular item
                 if let Some(parent) = stack.last_mut() {
-                    if parent.4 {
-                        // In else branch
-                        parent.3.get_or_insert_with(Vec::new).push(item);
+                    if parent.in_else_branch {
+                        parent.current_else_items.push(item);
                     } else {
-                        parent.2.push(item);
+                        parent.items.push(item);
                     }
                 } else {
                     result.push(item);
