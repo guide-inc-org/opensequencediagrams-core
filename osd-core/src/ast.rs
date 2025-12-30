@@ -53,14 +53,46 @@ impl Diagram {
                         add_participant(name, alias.as_deref(), *kind, participants, seen);
                     }
                     Item::Message { from, to, .. } => {
-                        add_participant(
-                            from,
-                            None,
-                            ParticipantKind::Participant,
-                            participants,
-                            seen,
-                        );
-                        add_participant(to, None, ParticipantKind::Participant, participants, seen);
+                        // Skip boundary markers [ and ]
+                        if from != "[" && from != "]" {
+                            add_participant(
+                                from,
+                                None,
+                                ParticipantKind::Participant,
+                                participants,
+                                seen,
+                            );
+                        }
+                        if to != "[" && to != "]" {
+                            add_participant(to, None, ParticipantKind::Participant, participants, seen);
+                        }
+                    }
+                    Item::Note { participants: note_participants, .. } => {
+                        for p in note_participants {
+                            add_participant(p, None, ParticipantKind::Participant, participants, seen);
+                        }
+                    }
+                    Item::State { participants: state_participants, .. } => {
+                        for p in state_participants {
+                            add_participant(p, None, ParticipantKind::Participant, participants, seen);
+                        }
+                    }
+                    Item::Ref { participants: ref_participants, input_from, output_to, .. } => {
+                        // Add input_from first (e.g., Alice in "Alice->ref over Bob, Mary")
+                        if let Some(from) = input_from {
+                            add_participant(from, None, ParticipantKind::Participant, participants, seen);
+                        }
+                        // Then add ref participants (e.g., Bob, Mary)
+                        for p in ref_participants {
+                            add_participant(p, None, ParticipantKind::Participant, participants, seen);
+                        }
+                        // Finally add output_to if different
+                        if let Some(to) = output_to {
+                            add_participant(to, None, ParticipantKind::Participant, participants, seen);
+                        }
+                    }
+                    Item::Activate { participant } | Item::Deactivate { participant } | Item::Destroy { participant } => {
+                        add_participant(participant, None, ParticipantKind::Participant, participants, seen);
                     }
                     Item::Block {
                         items, else_sections, ..

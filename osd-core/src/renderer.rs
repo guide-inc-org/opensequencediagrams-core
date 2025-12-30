@@ -299,7 +299,8 @@ fn state_y_advance(config: &Config, line_count: usize) -> f64 {
 
 /// Calculate Y advancement for a ref box
 fn ref_y_advance(config: &Config, line_count: usize) -> f64 {
-    let box_height = ELEMENT_PADDING * 2.0 + line_count as f64 * ref_line_height(config);
+    // Include label tab height + content area
+    let box_height = BLOCK_LABEL_HEIGHT + ELEMENT_PADDING * 2.0 + line_count as f64 * ref_line_height(config);
     // Group height (ref box) + group spacing + next message text offset
     box_height + group_spacing(config) + MESSAGE_TEXT_ABOVE_ARROW
 }
@@ -902,6 +903,13 @@ impl RenderState {
     }
 
     fn get_x(&self, name: &str) -> f64 {
+        // Handle boundary markers for gate/found/lost messages
+        if name == "[" {
+            return self.config.padding;
+        }
+        if name == "]" {
+            return self.total_width - self.config.padding;
+        }
         *self.participant_x.get(name).unwrap_or(&0.0)
     }
 
@@ -2230,7 +2238,7 @@ fn render_participant_headers(svg: &mut String, state: &RenderState, y: f64) {
                         svg,
                         r#"<text x="{x}" y="{y}" class="participant-text">{name}</text>"#,
                         x = x,
-                        y = y + state.config.header_height / 2.0 + 5.0,
+                        y = y + state.config.header_height / 2.0,
                         name = escape_xml(&p.name)
                     )
                     .unwrap();
@@ -2923,7 +2931,7 @@ fn render_state(svg: &mut String, state: &mut RenderState, participants: &[Strin
     state.current_y += state_y_advance(&state.config, line_count);
 }
 
-/// Render a ref box (hexagon-like shape)
+/// Render a ref box (block-like style with pentagon tab)
 fn render_ref(
     svg: &mut String,
     state: &mut RenderState,
@@ -2937,38 +2945,46 @@ fn render_ref(
     let theme = &state.config.theme;
     let lines: Vec<&str> = text.split("\\n").collect();
     let line_height = ref_line_height(&state.config);
-    let box_height = state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
-    let notch_size = 10.0;
+    // Add extra height for the label tab
+    let label_height = BLOCK_LABEL_HEIGHT;
+    let box_height = label_height + state.config.note_padding * 2.0 + lines.len() as f64 * line_height;
 
-    // Calculate box position and width
+    // Calculate box position and width (span across participants)
+    let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(15);
+    let text_width = max_line_len as f64 * 8.0 + state.config.note_padding * 4.0;
+
     let (x, box_width) = if participants.len() == 1 {
         let px = state.get_x(&participants[0]);
-        let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(15);
-        let w = (max_line_len as f64 * 8.0 + state.config.note_padding * 2.0 + notch_size * 2.0)
-            .max(100.0);
+        let w = (text_width + 40.0).max(100.0);
         (px - w / 2.0, w)
     } else {
         let x1 = state.get_x(&participants[0]);
         let x2 = state.get_x(participants.last().unwrap());
         let span_width = (x2 - x1).abs() + state.config.participant_width * 0.8;
+        // Ensure box is wide enough for text with proper margins
+        let final_width = span_width.max(text_width);
         let center = (x1 + x2) / 2.0;
-        (center - span_width / 2.0, span_width)
+        (center - final_width / 2.0, final_width)
     };
 
     let shift = item_pre_shift(&state.config);
     let y = (state.current_y - shift).max(state.content_start());
-    let input_offset = state.config.note_padding + state.config.font_size + 1.0;
-    let output_padding = state.config.note_padding + 3.0;
+    let input_arrow_y = y + label_height / 2.0 + 4.0;
+    let output_arrow_y = y + box_height - label_height / 2.0 - 4.0;
 
     // Draw input signal arrow if present
     if let Some(from) = input_from {
         let from_x = state.get_x(from);
-        let to_x = x; // Left edge of ref box
-        let arrow_y = y + input_offset;
+        // Use the edge of the ref box that is closer to the sender
+        let to_x = if from_x < x + box_width / 2.0 {
+            x // Left edge if sender is on the left
+        } else {
+            x + box_width // Right edge if sender is on the right
+        };
 
         // Calculate arrowhead
-        let direction = arrow_direction(from_x, arrow_y, to_x, arrow_y);
-        let arrow_points = arrowhead_points(to_x, arrow_y, direction);
+        let direction = arrow_direction(from_x, input_arrow_y, to_x, input_arrow_y);
+        let arrow_points = arrowhead_points(to_x, input_arrow_y, direction);
         let line_end_x = to_x - ARROWHEAD_SIZE * direction.cos();
 
         // Draw arrow line
@@ -2976,7 +2992,7 @@ fn render_ref(
             svg,
             r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" class="message"/>"##,
             x1 = from_x,
-            y = arrow_y,
+            y = input_arrow_y,
             x2 = line_end_x
         )
         .unwrap();
@@ -2996,50 +3012,63 @@ fn render_ref(
                 svg,
                 r##"<text x="{x}" y="{y}" class="message-text" text-anchor="middle">{t}</text>"##,
                 x = text_x,
-                y = arrow_y - 8.0,
+                y = input_arrow_y - 8.0,
                 t = escape_xml(label)
             )
             .unwrap();
         }
     }
 
-    // Draw hexagon-like shape (ref box in WSD style)
-    // Left side has a notch cut
-    let ref_path = format!(
-        "M {x1} {y1} L {x2} {y1} L {x2} {y2} L {x1} {y2} L {x3} {y3} Z",
-        x1 = x + notch_size,
+    // Draw block-style rectangle frame
+    writeln!(
+        svg,
+        r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" class="block"/>"#,
+        x = x,
+        y = y,
+        w = box_width,
+        h = box_height
+    )
+    .unwrap();
+
+    // Pentagon/tab-shaped label (same style as alt/opt/loop blocks)
+    let label_text = "ref";
+    let tab_width = block_tab_width(label_text);
+    let notch_size = 5.0;
+    let label_text_offset = 16.0;
+
+    let pentagon_path = format!(
+        "M {x1} {y1} L {x2} {y1} L {x2} {y2} L {x3} {y3} L {x1} {y3} Z",
+        x1 = x,
         y1 = y,
-        x2 = x + box_width,
-        y2 = y + box_height,
-        x3 = x,
-        y3 = y + box_height / 2.0
+        x2 = x + tab_width,
+        y2 = y + label_height - notch_size,
+        x3 = x + tab_width - notch_size,
+        y3 = y + label_height
     );
 
     writeln!(
         svg,
-        r##"<path d="{path}" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>"##,
-        path = ref_path,
-        fill = theme.ref_fill,
-        stroke = theme.ref_stroke
+        r##"<path d="{path}" fill="{fill}" stroke="{stroke}"/>"##,
+        path = pentagon_path,
+        fill = theme.block_label_fill,
+        stroke = theme.block_stroke
     )
     .unwrap();
 
-    // Add "ref" label in top-left
+    // "ref" label text
     writeln!(
         svg,
-        r##"<text x="{x}" y="{y}" fill="{fill}" font-family="{font}" font-size="{size}px" font-weight="bold">ref</text>"##,
-        x = x + notch_size + 4.0,
-        y = y + state.config.font_size,
-        fill = theme.ref_text_color,
-        font = theme.font_family,
-        size = state.config.font_size - 2.0
+        r#"<text x="{x}" y="{y}" class="block-label">{label}</text>"#,
+        x = x + 5.0,
+        y = y + label_text_offset,
+        label = label_text
     )
     .unwrap();
 
-    // Draw text centered
+    // Draw text centered below the label tab
     let text_x = x + box_width / 2.0;
     for (i, line) in lines.iter().enumerate() {
-        let text_y = y + state.config.note_padding + (i as f64 + 0.8) * line_height;
+        let text_y = y + label_height + state.config.note_padding + (i as f64 + 0.5) * line_height;
         writeln!(
             svg,
             r##"<text x="{x}" y="{y}" text-anchor="middle" fill="{fill}" font-family="{font}" font-size="{size}px">{t}</text>"##,
@@ -3055,13 +3084,17 @@ fn render_ref(
 
     // Draw output signal arrow if present
     if let Some(to) = output_to {
-        let from_x = x + box_width; // Right edge of ref box
         let to_x = state.get_x(to);
-        let arrow_y = y + box_height - output_padding;
+        // Use the edge of the ref box that is closer to the recipient
+        let from_x = if to_x < x + box_width / 2.0 {
+            x // Left edge if recipient is on the left
+        } else {
+            x + box_width // Right edge if recipient is on the right
+        };
 
         // Calculate arrowhead
-        let direction = arrow_direction(from_x, arrow_y, to_x, arrow_y);
-        let arrow_points = arrowhead_points(to_x, arrow_y, direction);
+        let direction = arrow_direction(from_x, output_arrow_y, to_x, output_arrow_y);
+        let arrow_points = arrowhead_points(to_x, output_arrow_y, direction);
         let line_end_x = to_x - ARROWHEAD_SIZE * direction.cos();
 
         // Draw dashed arrow line (response style)
@@ -3069,7 +3102,7 @@ fn render_ref(
             svg,
             r##"<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" class="message-dashed"/>"##,
             x1 = from_x,
-            y = arrow_y,
+            y = output_arrow_y,
             x2 = line_end_x
         )
         .unwrap();
@@ -3089,7 +3122,7 @@ fn render_ref(
                 svg,
                 r##"<text x="{x}" y="{y}" class="message-text" text-anchor="middle">{t}</text>"##,
                 x = text_x,
-                y = arrow_y - 8.0,
+                y = output_arrow_y - 8.0,
                 t = escape_xml(label)
             )
             .unwrap();

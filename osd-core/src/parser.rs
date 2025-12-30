@@ -453,6 +453,9 @@ fn parse_participant_decl(input: &str) -> IResult<&str, Item> {
 /// Parse a name (quoted or unquoted) - Task 6: supports colon in quoted names
 fn parse_name(input: &str) -> IResult<&str, &str> {
     alt((
+        // Boundary markers for gate/found/lost messages
+        tag("["),
+        tag("]"),
         // Quoted name (can contain colons, spaces, etc.)
         delimited(char('"'), take_until("\""), char('"')),
         // Unquoted identifier
@@ -952,14 +955,14 @@ mod tests {
                 kind,
                 label,
                 items,
-                else_items,
+                else_sections,
                 ..
             } => {
                 assert_eq!(*kind, BlockKind::Alt);
                 assert_eq!(label, "success");
                 assert_eq!(items.len(), 1);
-                assert!(else_items.is_some());
-                assert_eq!(else_items.as_ref().unwrap().len(), 1);
+                assert_eq!(else_sections.len(), 1);
+                assert_eq!(else_sections[0].items.len(), 1);
             }
             _ => panic!("Expected Block"),
         }
